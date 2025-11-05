@@ -1,0 +1,66 @@
+[build-system]
+requires = ["setuptools>=69.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "livecap-core"
+version = "1.0.0.dev0"
+description = "Core speech transcription engines and utilities extracted from LiveCap."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [
+  { name = "Pine Lab" }
+]
+dependencies = [
+  "appdirs>=1.4.4",
+  "ffmpeg-python",
+  "huggingface-hub>=0.34.0",
+  "librosa",
+  "moviepy",
+  "numpy",
+  "onnxruntime",
+  "pydub",
+  "requests>=2.31",
+  "scipy",
+  "sounddevice",
+  "soundfile",
+  "ten-vad @ git+https://github.com/TEN-framework/ten-vad.git@a64b408d9ff89cd92bd0772ed99f9d58b7a005b1",
+  "tqdm>=4.65",
+  "whisper-s2t",
+]
+keywords = ["speech-to-text", "translation", "live captioning"]
+
+[project.urls]
+Homepage = "https://github.com/Mega-Gorilla/livecap-core"
+Source = "https://github.com/Mega-Gorilla/livecap-core"
+Issues = "https://github.com/Mega-Gorilla/livecap-core/issues"
+Documentation = "https://github.com/Mega-Gorilla/Live_Cap_v3/tree/main/docs"
+
+[project.scripts]
+livecap-core = "livecap_core.cli:main"
+
+[project.optional-dependencies]
+"engines-nemo" = [
+  "Cython",
+  "hydra-core",
+  "nemo-toolkit",
+  "nemo_toolkit[asr]",
+  "ml-dtypes>=0.5.0; python_version < '3.13'",
+]
+"engines-torch" = [
+  "reazonspeech-k2-asr @ git+https://github.com/reazon-research/ReazonSpeech.git@9d80a30af1b5f456817db901a28ae462731b8157#subdirectory=pkg/k2-asr",
+  "torch",
+  "torchaudio",
+  "torchvision",
+]
+"translation" = [
+  "deep-translator",
+]
+"dev" = [
+  "pytest>=8.4",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["livecap_core*", "engines*", "config*"]
