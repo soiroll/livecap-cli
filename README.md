@@ -34,6 +34,13 @@ For the full migration plan, refer to
 - Pre-release (alpha/beta/rc) tagging workflow and checklists:
   [`docs/dev-docs/releases/pre-release-tag-workflow.md`](docs/dev-docs/releases/pre-release-tag-workflow.md)
 
+## Requirements
+
+- `sherpa-onnx>=1.12.15` is installed by default so the ReazonSpeech engine
+  works out of the box (same floor version as Live_Cap_v3). No manual pip
+  install is required when following the standard `uv sync` / `pip install`
+  steps described in the docs.
+
 ## Getting Involved
 
 - Issues & feature requests: use the tracker in this repository once it opens

@@ -29,7 +29,7 @@
 
 ### 2. サードパーティライセンス
 
-- [ ] `docs/dev-docs/licensing-archive/01-license-audit.md` の依存リストを最新化。
+- [ ] `docs/dev-docs/licensing-archive/01-license-audit.md` の依存リストを最新化（例: ReazonSpeech 用 `sherpa-onnx` を含める）。
 - [ ] 追加依存がある場合は SPDX 識別子とライセンス本文へのリンクを追記。
 - [ ] Steam や商用配布を行わない場合でも、配布物に第三者ライセンスの
       NOTICE ファイルを含める。
