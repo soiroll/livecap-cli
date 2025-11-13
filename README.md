@@ -1,52 +1,123 @@
 # LiveCap Core
 
-Core runtime components for LiveCap, extracted into a standalone Python package.
-This repository will host the streaming transcription pipeline, engine adapters,
-and shared utilities that power both the LiveCap GUI and headless deployments.
+LiveCap Core is the standalone runtime used by the LiveCap GUI and headless
+deployments. It ships the streaming transcription pipeline, engine adapters
+(Whisper/ReazonSpeech/NeMo…), resource managers, and configuration helpers that
+other projects embed.
 
-## Licensing
+## What's inside?
 
-LiveCap Core ships under the GNU Affero General Public License v3.0 (AGPL-3.0).
-The full text is provided in `LICENSE`, and any derivative work that is
-distributed or offered as a network service must comply with the AGPL terms.
-Questions about permissible usage or collaboration can be shared via the
-[LiveCap Discord community](https://discord.gg/hdSV4hJR8Y).
+- `livecap_core/config`: default config builders, schema validation, and
+  helpers for CLI/GUI integration.
+- `livecap_core/transcription`: streaming/file transcription pipelines plus
+  event normalization utilities.
+- `livecap_core/engines`: adapters for Whisper, ReazonSpeech, Parakeet, etc.
+  Optional extras extend these engines with heavier dependencies.
 
-## Status
-
-> ⚠️ **Early extraction phase**  
-> The codebase is migrating from the monolithic LiveCap repository. API surface,
-> packaging metadata, and CI workflows are still being finalized. Expect rapid
-> iteration until the first 1.0.0 release candidate.
-
-## Roadmap (condensed)
-
-1. Bootstrap packaging (`pyproject.toml`, `uv.lock`, minimal CI).
-2. Migrate `livecap_core/` runtime modules and accompanying tests.
-3. Publish pre-release artifacts to TestPyPI (`1.0.0a*`, `1.0.0b*`, `1.0.0rc*`).
-4. Coordinate 1.0.0 GA with the LiveCap GUI repository.
-
-For the full migration plan, refer to
-[`docs/dev-docs/architecture/livecap-core-extraction.md`](https://github.com/Mega-Gorilla/Live_Cap_v3/blob/main/docs/dev-docs/architecture/livecap-core-extraction.md).
-
-## Releases
-
-- Pre-release (alpha/beta/rc) tagging workflow and checklists:
-  [`docs/dev-docs/releases/pre-release-tag-workflow.md`](docs/dev-docs/releases/pre-release-tag-workflow.md)
+> ℹ️ **Project status** – We are still extracting modules from the monolithic
+> LiveCap repository. Public APIs may change until the first 1.0.0 release
+> candidate.
 
 ## Requirements
 
-- `sherpa-onnx>=1.12.15` is installed by default so the ReazonSpeech engine
-  works out of the box (same floor version as Live_Cap_v3). No manual pip
-  install is required when following the standard `uv sync` / `pip install`
-  steps described in the docs.
+- Python **3.10 – 3.12** (match `pyproject.toml`).
+- POSIX-like environment (Linux/macOS). Windows support is planned and tracked
+  in the Live_Cap_v3 repository.
+- [uv](https://github.com/astral-sh/uv) (recommended) or pip for dependency
+  management.
+- `sherpa-onnx>=1.12.15` ships with the base install so the ReazonSpeech engine
+  works out of the box (same floor version as Live_Cap_v3).
 
-## Getting Involved
+## Installation
 
-- Issues & feature requests: use the tracker in this repository once it opens
-  for public contributions.
-- Security or usage inquiries: see `LICENSE-COMMERCIAL.md` for Discord contact
-  details.
+```bash
+# Clone the repo
+git clone https://github.com/Mega-Gorilla/livecap-core
+cd livecap-core
 
-Stay tuned for contributor guidelines and API documentation as the split
-progresses.
+# Recommended: uv
+uv sync --extra translation --extra dev
+
+# Optional: traditional pip/venv
+python -m venv .venv && source .venv/bin/activate
+pip install -e .[translation,dev]
+```
+
+### Optional extras
+
+| Extra name       | Installs …                             | When to use                                    |
+| ---------------- | -------------------------------------- | ---------------------------------------------- |
+| `engines-torch`  | `reazonspeech-k2-asr`, `torch`, `torchaudio`, `torchvision` (ensures ReazonSpeech stack including sherpa-onnx) | ReazonSpeech / Torch-based engines             |
+| `engines-nemo`   | `nemo-toolkit`, `hydra-core`, etc.     | NVIDIA NeMo engine support                     |
+| `translation`    | `deep-translator`                      | Translation pipeline extras                    |
+| `dev`            | `pytest`, tooling for contributors     | Running tests and lint locally                 |
+
+Install with `uv sync --extra engines-torch` or
+`pip install "livecap-core[engines-torch]"`.
+
+## Usage
+
+### CLI diagnostics
+
+```bash
+uv run livecap-core --dump-config > default-config.json
+```
+
+### Programmatic example
+
+```python
+from livecap_core import FileTranscriptionPipeline, normalize_to_event_dict
+from livecap_core.config.defaults import get_default_config
+
+config = get_default_config()
+pipeline = FileTranscriptionPipeline(config=config)
+
+# Minimal stub transcriber (replace with a real engine such as SharedEngineManager)
+def stub_transcriber(audio_data, sample_rate):
+    # Return a list of subtitle events (start, end, text)
+    return [(0.0, 1.2, "Hello world")]
+
+result = pipeline.process_file(
+    file_path="sample.wav",
+    segment_transcriber=stub_transcriber,
+    write_subtitles=False,
+)
+
+# Normalise an event dictionary for downstream consumers
+event = normalize_to_event_dict({"text": "Hello", "offset": 0.0, "duration": 1.2})
+print("Transcription success:", result.success, "sample text:", event["text"])
+```
+
+This prints the normalized transcription event that downstream consumers expect.
+
+## Testing
+
+```bash
+# Match the CI workflow
+uv sync --extra translation --extra engines-torch --extra dev
+uv run python -m pytest tests/core tests/transcription/test_transcription_event_normalization.py
+
+# (Optional) Run all tests, including integration tests that require network access
+CI=false uv run python -m pytest tests
+```
+
+For optional extras you can run `uv run python -m pytest tests/core/test_engine_factory.py`
+after installing the corresponding extras to ensure engine adapters import
+correctly.
+
+## Documentation & Further Reading
+
+- Pre-release workflow:
+  [`docs/dev-docs/releases/pre-release-tag-workflow.md`](docs/dev-docs/releases/pre-release-tag-workflow.md)
+- Architecture notes and roadmap:
+  [`docs/dev-docs/architecture/livecap-core-extraction.md`](https://github.com/Mega-Gorilla/Live_Cap_v3/blob/main/docs/dev-docs/architecture/livecap-core-extraction.md)
+- Licensing and compliance checklist:
+  [`docs/dev-docs/licensing/README.md`](docs/dev-docs/licensing/README.md)
+
+## License & Contact
+
+LiveCap Core ships under the GNU Affero General Public License v3.0 (AGPL-3.0).
+The full text is provided in `LICENSE`. Questions about permissible usage or
+collaboration can be shared via the
+[LiveCap Discord community](https://discord.gg/hdSV4hJR8Y). Security or
+commercial inquiries are listed in `LICENSE-COMMERCIAL.md`.
