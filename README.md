@@ -29,6 +29,11 @@ Questions about permissible usage or collaboration can be shared via the
 For the full migration plan, refer to
 [`docs/dev-docs/architecture/livecap-core-extraction.md`](https://github.com/Mega-Gorilla/Live_Cap_v3/blob/main/docs/dev-docs/architecture/livecap-core-extraction.md).
 
+## Releases
+
+- Pre-release (alpha/beta/rc) tagging workflow and checklists:
+  [`docs/dev-docs/releases/pre-release-tag-workflow.md`](docs/dev-docs/releases/pre-release-tag-workflow.md)
+
 ## Getting Involved
 
 - Issues & feature requests: use the tracker in this repository once it opens
