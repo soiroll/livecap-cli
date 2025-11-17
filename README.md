@@ -103,12 +103,22 @@ uv run python -m pytest tests
 uv sync --extra translation --extra dev --extra engines-torch
 uv run python -m pytest tests/core/engines
 
-# Integration tests (opt-in: downloads FFmpeg/models)
-LIVECAP_ENABLE_INTEGRATION=true uv run python -m pytest tests/integration
+# Integration tests (included in default pytest run)
+uv run python -m pytest tests/integration
 ```
 
 See [`docs/dev-docs/testing/README.md`](docs/dev-docs/testing/README.md) for the
 full test matrix, optional extras, and troubleshooting tips.
+
+### FFmpeg setup (future use)
+
+Integration tests currently use a stub FFmpeg manager, so additional binaries
+are not required to run `pytest tests`. When Issue #21 adds MKV extraction
+coverage, download FFmpeg/FFprobe (for example from
+[ffbinaries-prebuilt](https://github.com/ffbinaries/ffbinaries-prebuilt/releases)),
+place them under `./ffmpeg-bin/`, and set `LIVECAP_FFMPEG_BIN` to that path so
+CI/local runs stay offline. The directory is already ignored by git so each
+environment can supply its own binaries.
 
 ## Documentation & Further Reading
 

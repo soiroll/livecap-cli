@@ -16,9 +16,10 @@ that require network access or large downloads.
 | `tests/transcription` | Pure transcription helper/unit tests (legacy path kept for Live_Cap_v3 compatibility) |
 | `tests/integration/transcription` | End-to-end pipelines that touch audio, disk, or model downloads |
 
-Add new tests beside the module they validate. If a test requires real model
-artifacts or external binaries, move it under `tests/integration/` and guard it
-with `pytest.mark.skipif` so CI stays green.
+Add new tests beside the module they validate. Put scenarios that hit real
+artifacts or external binaries under `tests/integration/`. These suites now run
+as part of `pytest tests`, so keep them deterministic and use explicit flags
+only when absolutely necessary (e.g., future MKV fixtures from Issue #21).
 
 ## Dependency Profiles
 
@@ -59,28 +60,29 @@ uv sync --extra translation --extra dev --extra engines-torch
 uv run python -m pytest tests/core/engines
 ```
 
-## Integration Tests
+## Integration Tests & FFmpeg setup
 
-Integration tests live under `tests/integration/` and download FFmpeg binaries
-or speech models. Opt in explicitly to avoid surprise network traffic:
+Integration tests live under `tests/integration/` and now run as part of the
+default `pytest tests` invocation. The current suite relies on a stub
+`FFmpegManager`, so no FFmpeg binaries are required to run CI or local tests.
 
-```bash
-export LIVECAP_ENABLE_INTEGRATION=true
-uv sync --extra translation --extra dev --extra engines-torch
-uv run python -m pytest tests/integration
-```
+Future additions such as Issue #21 (MKV extraction coverage) will need real
+`ffmpeg/ffprobe` executables. When that happens, download an FFmpeg build (for
+example from [ffbinaries-prebuilt](https://github.com/ffbinaries/ffbinaries-prebuilt/releases)),
+place `ffmpeg`/`ffprobe` under `./ffmpeg-bin/`, and set
+`LIVECAP_FFMPEG_BIN="$PWD/ffmpeg-bin"` (PowerShell:
+`$env:LIVECAP_FFMPEG_BIN="$(Get-Location)\ffmpeg-bin"`).
 
-Unset the variable (or leave it absent) to keep integration tests skipped. Use
-this flow before releasing binaries or when validating hardware/engine combos.
-The same `LIVECAP_ENABLE_INTEGRATION` flag is referenced by README and the
-integration workflow, so keep the name consistent if it ever changes.
+Until then, keep `ffmpeg-bin/` ignored in git so contributors can experiment
+without committing binaries.
 
 ## CI Mapping
 
-- `Core Tests` workflow: runs `pytest tests` on Python 3.10/3.11/3.12 with `translation`+`dev` extras.
+- `Core Tests` workflow: runs `pytest tests` (integration tests included) on Python 3.10/3.11/3.12 with `translation`+`dev` extras. No FFmpeg setup is required while tests rely on the stub manager.
 - `Optional Extras` job: validates `engines-torch` / `engines-nemo` installs.
-- `Integration Tests` workflow: manual or scheduled opt-in that sets
-  `LIVECAP_ENABLE_INTEGRATION=true`.
+- `Integration Tests` workflow: manual or scheduled opt-in that runs the same
+  suite with additional extras/models when required (future Issue #21 may add
+  ffmpeg-bin preparation here).
 
 Keep this document updated whenever the workflows or extras change so local
 developers can reproduce CI faithfully.
