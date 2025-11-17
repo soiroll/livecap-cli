@@ -78,10 +78,11 @@ without committing binaries.
 
 ## CI Mapping
 
-- `Core Tests` workflow: runs `pytest tests` (integration tests included) on Python 3.10/3.11/3.12 with `translation`+`dev` extras and a prepared `ffmpeg-bin/`.
+- `Core Tests` workflow: runs `pytest tests` (integration tests included) on Python 3.10/3.11/3.12 with `translation`+`dev` extras. No FFmpeg setup is required while tests rely on the stub manager.
 - `Optional Extras` job: validates `engines-torch` / `engines-nemo` installs.
 - `Integration Tests` workflow: manual or scheduled opt-in that runs the same
-  suite with additional extras/models when required.
+  suite with additional extras/models when required (future Issue #21 may add
+  ffmpeg-bin preparation here).
 
 Keep this document updated whenever the workflows or extras change so local
 developers can reproduce CI faithfully.
