@@ -98,6 +98,15 @@ MKV 抽出回帰テストでは実際の FFmpeg 経路を通します。ロー�
 `LIVECAP_FFMPEG_BIN` をそのディレクトリへ向けてください。`ffmpeg-bin/`
 は `.gitignore` 登録済みなので、環境ごとに任意のビルドを置けます。
 
+CI と同じようにシステムの FFmpeg を使う場合は、次のようにコピーすれば最小構成で準備できます:
+
+```bash
+mkdir -p ffmpeg-bin
+cp "$(command -v ffmpeg)" ffmpeg-bin/ffmpeg
+cp "$(command -v ffprobe)" ffmpeg-bin/ffprobe
+export LIVECAP_FFMPEG_BIN="$PWD/ffmpeg-bin"
+```
+
 ## 関連ドキュメント
 
 - プレリリース手順:

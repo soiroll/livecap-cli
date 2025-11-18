@@ -82,6 +82,28 @@ def pipeline_factory(ffmpeg_manager_stub):
         pipeline.close()
 
 
+@pytest.fixture
+def real_ffmpeg_pipeline_factory():
+    """
+    Factory that wires the real FFmpeg manager, used when the extraction
+    path must be exercised (e.g., MKV regression tests).
+    """
+    pipelines: list[FileTranscriptionPipeline] = []
+
+    def _factory(**kwargs):
+        pipeline = FileTranscriptionPipeline(
+            config=get_default_config(),
+            **kwargs,
+        )
+        pipelines.append(pipeline)
+        return pipeline
+
+    yield _factory
+
+    for pipeline in pipelines:
+        pipeline.close()
+
+
 def test_process_file_creates_srt(tmp_path, pipeline_factory):
     audio_path = tmp_path / "example.wav"
     sample_rate = _write_test_wave(audio_path)
@@ -167,22 +189,19 @@ def test_process_file_custom_segmenter(tmp_path, pipeline_factory):
     assert len(segment_statuses) == len(segments)
 
 
-def test_mkv_input_triggers_ffmpeg_extraction(tmp_path):
+def test_mkv_input_triggers_ffmpeg_extraction(tmp_path, real_ffmpeg_pipeline_factory):
     tests_root = Path(__file__).resolve().parents[2]
     mkv_source = tests_root / "assets" / "audio" / "test_tone_1s.mkv"
-    assert mkv_source.exists()
+    assert mkv_source.exists(), f"MKV fixture not found: {mkv_source}"
 
     working_mkv = tmp_path / "input.mkv"
     shutil.copy2(mkv_source, working_mkv)
 
-    pipeline = FileTranscriptionPipeline(config=get_default_config())
-    try:
-        result = pipeline.process_file(
-            working_mkv,
-            segment_transcriber=lambda audio, sr: f"len={len(audio)} sr={sr}",
-        )
-    finally:
-        pipeline.close()
+    pipeline = real_ffmpeg_pipeline_factory()
+    result = pipeline.process_file(
+        working_mkv,
+        segment_transcriber=lambda audio, sr: f"len={len(audio)} sr={sr}",
+    )
 
     assert result.success
     assert result.output_path == working_mkv.with_suffix(".srt")

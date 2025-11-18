@@ -121,6 +121,16 @@ CI/local runs can resolve the binaries without additional downloads. The
 `ffmpeg-bin/` directory is ignored by git so each environment can supply its
 own binaries.
 
+To mirror the CI setup with a locally installed FFmpeg build, you can copy the
+system binaries into `ffmpeg-bin/`:
+
+```bash
+mkdir -p ffmpeg-bin
+cp "$(command -v ffmpeg)" ffmpeg-bin/ffmpeg
+cp "$(command -v ffprobe)" ffmpeg-bin/ffprobe
+export LIVECAP_FFMPEG_BIN="$PWD/ffmpeg-bin"
+```
+
 ## Documentation & Further Reading
 
 - Pre-release workflow:
