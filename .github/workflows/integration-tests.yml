@@ -8,6 +8,8 @@ on:
 jobs:
   transcription-pipeline:
     runs-on: ubuntu-latest
+    env:
+      LIVECAP_FFMPEG_BIN: "${{ github.workspace }}/ffmpeg-bin"
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -19,6 +21,19 @@ jobs:
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v3
+
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Prepare ffmpeg-bin directory
+        run: |
+          mkdir -p ffmpeg-bin
+          if command -v ffmpeg >/dev/null 2>&1; then
+            cp "$(command -v ffmpeg)" ffmpeg-bin/ffmpeg
+          fi
+          if command -v ffprobe >/dev/null 2>&1; then
+            cp "$(command -v ffprobe)" ffmpeg-bin/ffprobe
+          fi
 
       - name: Sync dependencies
         run: uv sync --extra translation --extra dev --extra engines-torch

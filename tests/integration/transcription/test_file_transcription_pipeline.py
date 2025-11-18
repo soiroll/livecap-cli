@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
+import shutil
 import stat
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -69,6 +71,28 @@ def pipeline_factory(ffmpeg_manager_stub):
         pipeline = FileTranscriptionPipeline(
             config=get_default_config(),
             ffmpeg_manager=ffmpeg_manager_stub,
+            **kwargs,
+        )
+        pipelines.append(pipeline)
+        return pipeline
+
+    yield _factory
+
+    for pipeline in pipelines:
+        pipeline.close()
+
+
+@pytest.fixture
+def real_ffmpeg_pipeline_factory():
+    """
+    Factory that wires the real FFmpeg manager, used when the extraction
+    path must be exercised (e.g., MKV regression tests).
+    """
+    pipelines: list[FileTranscriptionPipeline] = []
+
+    def _factory(**kwargs):
+        pipeline = FileTranscriptionPipeline(
+            config=get_default_config(),
             **kwargs,
         )
         pipelines.append(pipeline)
@@ -163,3 +187,27 @@ def test_process_file_custom_segmenter(tmp_path, pipeline_factory):
     assert len(result.subtitles) == len(segments)
     segment_statuses = [event.status for event in segment_progress if event.status == "segment"]
     assert len(segment_statuses) == len(segments)
+
+
+def test_mkv_input_triggers_ffmpeg_extraction(tmp_path, real_ffmpeg_pipeline_factory):
+    tests_root = Path(__file__).resolve().parents[2]
+    mkv_source = tests_root / "assets" / "audio" / "test_tone_1s.mkv"
+    assert mkv_source.exists(), f"MKV fixture not found: {mkv_source}"
+
+    working_mkv = tmp_path / "input.mkv"
+    shutil.copy2(mkv_source, working_mkv)
+
+    pipeline = real_ffmpeg_pipeline_factory()
+    result = pipeline.process_file(
+        working_mkv,
+        segment_transcriber=lambda audio, sr: f"len={len(audio)} sr={sr}",
+    )
+
+    assert result.success
+    assert result.output_path == working_mkv.with_suffix(".srt")
+    assert result.output_path and result.output_path.exists()
+    assert result.subtitles
+    assert result.metadata["sample_rate"] == 16000
+
+    srt_content = result.output_path.read_text(encoding="utf-8")
+    assert "len=" in srt_content
