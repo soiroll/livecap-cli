@@ -89,10 +89,10 @@ uv run python -m pytest tests/core/engines
 uv run python -m pytest tests/integration
 ```
 
-## FFmpeg セットアップ（将来の拡張向け）
+## FFmpeg セットアップ
 
-現在の統合テストは FFmpeg マネージャーをスタブ化しているため、追加バイナリなしで
-`pytest tests` を実行できます。Issue #21 で MKV 抽出テストを追加する際には、
+多くの統合テストは FFmpeg マネージャーをスタブ化していますが、Issue #21 で追加された
+MKV 抽出回帰テストでは実際の FFmpeg 経路を通します。ローカルでこのテストを実行するには、
 [ffbinaries-prebuilt](https://github.com/ffbinaries/ffbinaries-prebuilt/releases)
 などから取得した `ffmpeg` / `ffprobe` を `./ffmpeg-bin/` に配置し、
 `LIVECAP_FFMPEG_BIN` をそのディレクトリへ向けてください。`ffmpeg-bin/`

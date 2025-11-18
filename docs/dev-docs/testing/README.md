@@ -19,7 +19,7 @@ that require network access or large downloads.
 Add new tests beside the module they validate. Put scenarios that hit real
 artifacts or external binaries under `tests/integration/`. These suites now run
 as part of `pytest tests`, so keep them deterministic and use explicit flags
-only when absolutely necessary (e.g., future MKV fixtures from Issue #21).
+only when absolutely necessary (for example, the MKV fixtures from Issue #21).
 
 ## Dependency Profiles
 
@@ -63,26 +63,27 @@ uv run python -m pytest tests/core/engines
 ## Integration Tests & FFmpeg setup
 
 Integration tests live under `tests/integration/` and now run as part of the
-default `pytest tests` invocation. The current suite relies on a stub
-`FFmpegManager`, so no FFmpeg binaries are required to run CI or local tests.
+default `pytest tests` invocation. Most scenarios still rely on a stub
+`FFmpegManager`, but Issue #21 adds a lightweight MKV-based regression test
+that exercises the real FFmpeg extraction path.
 
-Future additions such as Issue #21 (MKV extraction coverage) will need real
-`ffmpeg/ffprobe` executables. When that happens, download an FFmpeg build (for
-example from [ffbinaries-prebuilt](https://github.com/ffbinaries/ffbinaries-prebuilt/releases)),
+To run the MKV extraction test, you need real `ffmpeg/ffprobe` executables
+available. Download an FFmpeg build (for example from
+[ffbinaries-prebuilt](https://github.com/ffbinaries/ffbinaries-prebuilt/releases)),
 place `ffmpeg`/`ffprobe` under `./ffmpeg-bin/`, and set
 `LIVECAP_FFMPEG_BIN="$PWD/ffmpeg-bin"` (PowerShell:
 `$env:LIVECAP_FFMPEG_BIN="$(Get-Location)\ffmpeg-bin"`).
 
-Until then, keep `ffmpeg-bin/` ignored in git so contributors can experiment
-without committing binaries.
+The `ffmpeg-bin/` directory is ignored by git so contributors can supply their
+own binaries without committing them.
 
 ## CI Mapping
 
-- `Core Tests` workflow: runs `pytest tests` (integration tests included) on Python 3.10/3.11/3.12 with `translation`+`dev` extras. No FFmpeg setup is required while tests rely on the stub manager.
+- `Core Tests` workflow: runs `pytest tests` (integration tests included) on Python 3.10/3.11/3.12 with `translation`+`dev` extras. The workflow prepares a `./ffmpeg-bin/` directory and exposes it via `LIVECAP_FFMPEG_BIN` so the MKV regression test can resolve FFmpeg offline using the system binaries available on the runner.
 - `Optional Extras` job: validates `engines-torch` / `engines-nemo` installs.
 - `Integration Tests` workflow: manual or scheduled opt-in that runs the same
-  suite with additional extras/models when required (future Issue #21 may add
-  ffmpeg-bin preparation here).
+  suite with additional extras/models when required and also prepares
+  `ffmpeg-bin` for MKV coverage.
 
 Keep this document updated whenever the workflows or extras change so local
 developers can reproduce CI faithfully.
