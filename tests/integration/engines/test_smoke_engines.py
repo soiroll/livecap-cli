@@ -12,11 +12,14 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+TESTS_ROOT = ROOT / "tests"
+if str(TESTS_ROOT) not in sys.path:
+    sys.path.insert(0, str(TESTS_ROOT))
 
 from engines.engine_factory import EngineFactory
 from livecap_core.config.defaults import get_default_config
 from livecap_core.transcription import FileTranscriptionPipeline
-from tests.utils.text_normalization import normalize_text
+from utils.text_normalization import normalize_text
 
 pytestmark = pytest.mark.engine_smoke
 
