@@ -30,6 +30,14 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v3
 
+      - name: Cache ffmpeg-bin
+        uses: actions/cache@v4
+        with:
+          path: ffmpeg-bin
+          key: ffmpeg-bin-${{ runner.os }}-${{ hashFiles('.github/actions/setup-livecap-ffmpeg/action.yml') }}
+          restore-keys: |
+            ffmpeg-bin-${{ runner.os }}-
+
       - name: Setup LiveCap FFmpeg
         uses: ./.github/actions/setup-livecap-ffmpeg
         with:
@@ -58,6 +66,14 @@ jobs:
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v3
+
+      - name: Cache ffmpeg-bin
+        uses: actions/cache@v4
+        with:
+          path: ffmpeg-bin
+          key: ffmpeg-bin-${{ runner.os }}-${{ hashFiles('.github/actions/setup-livecap-ffmpeg/action.yml') }}
+          restore-keys: |
+            ffmpeg-bin-${{ runner.os }}-
 
       - name: Setup LiveCap FFmpeg
         uses: ./.github/actions/setup-livecap-ffmpeg
@@ -108,6 +124,14 @@ jobs:
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v3
+
+      - name: Cache ffmpeg-bin
+        uses: actions/cache@v4
+        with:
+          path: ffmpeg-bin
+          key: ffmpeg-bin-${{ runner.os }}-${{ hashFiles('.github/actions/setup-livecap-ffmpeg/action.yml') }}
+          restore-keys: |
+            ffmpeg-bin-${{ runner.os }}-
 
       - name: Setup LiveCap FFmpeg
         uses: ./.github/actions/setup-livecap-ffmpeg
