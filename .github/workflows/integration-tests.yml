@@ -226,6 +226,24 @@ jobs:
           LIVECAP_FFMPEG_BIN: "${{ github.workspace }}/ffmpeg-bin"
         run: |
           $script = @"
+          import os
+          import sys
+          
+          # Monkey-patch os.uname for Windows to satisfy lhotse dependency
+          if sys.platform == "win32" and not hasattr(os, "uname"):
+              from collections import namedtuple
+              UnameResult = namedtuple("UnameResult", ["sysname", "nodename", "release", "version", "machine"])
+              def uname():
+                  # Avoid platform.* calls that might recurse back to os.uname
+                  return UnameResult(
+                      sysname="Windows",
+                      nodename=os.environ.get("COMPUTERNAME", "unknown"),
+                      release=os.environ.get("OS", "unknown"),
+                      version="10.0.xxxx",
+                      machine=os.environ.get("PROCESSOR_ARCHITECTURE", "AMD64")
+                  )
+              os.uname = uname
+
           from engines.engine_factory import EngineFactory
           from livecap_core.config.defaults import get_default_config
 
