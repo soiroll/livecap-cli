@@ -256,16 +256,42 @@ text, confidence = engine.transcribe(audio_data, sample_rate)
 
 ### 4.2 利用可能なエンジン
 
-| エンジンID | 説明 | 対応言語 |
-|-----------|------|---------|
-| `reazonspeech` | ReazonSpeech k2-asr | 日本語 |
-| `whispers2t_base` | WhisperS2T baseモデル | 多言語 |
-| `whispers2t_small` | WhisperS2T smallモデル | 多言語 |
-| `whispers2t_medium` | WhisperS2T mediumモデル | 多言語 |
-| `whispers2t_large_v3` | WhisperS2T large-v3 | 多言語 |
-| `parakeet` | NVIDIA Parakeet TDT | 英語 |
-| `canary` | NVIDIA Canary | en, de, es, fr |
-| `voxtral` | Mistral Voxtral | 多言語 |
+#### ReazonSpeech
+
+| エンジンID | モデル名 | モデルサイズ | 対応言語 |
+|-----------|---------|-------------|---------|
+| `reazonspeech` | ReazonSpeech K2 v2 | 159MB | ja |
+
+#### NVIDIA Parakeet
+
+| エンジンID | モデル名 | モデルサイズ | 対応言語 |
+|-----------|---------|-------------|---------|
+| `parakeet` | Parakeet TDT 0.6B v2 | 1.2GB | en |
+| `parakeet_ja` | Parakeet TDT CTC 0.6B JA | 600MB | ja |
+
+#### NVIDIA Canary
+
+| エンジンID | モデル名 | モデルサイズ | 対応言語 |
+|-----------|---------|-------------|---------|
+| `canary` | Canary 1B Flash | 1.5GB | en, de, fr, es |
+
+#### MistralAI Voxtral
+
+| エンジンID | モデル名 | モデルサイズ | 対応言語 |
+|-----------|---------|-------------|---------|
+| `voxtral` | Voxtral Mini 3B | 3GB | en, es, fr, pt, hi, de, nl, it |
+
+#### WhisperS2T (OpenAI Whisper)
+
+| エンジンID | モデル名 | モデルサイズ | 対応言語 |
+|-----------|---------|-------------|---------|
+| `whispers2t_tiny` | Whisper Tiny | 39MB | 多言語（13言語） |
+| `whispers2t_base` | Whisper Base | 74MB | 多言語（13言語） |
+| `whispers2t_small` | Whisper Small | 244MB | 多言語（13言語） |
+| `whispers2t_medium` | Whisper Medium | 769MB | 多言語（13言語） |
+| `whispers2t_large_v3` | Whisper Large-v3 | 1.55GB | 多言語（13言語） |
+
+> **WhisperS2T対応言語**: ja, en, zh-CN, zh-TW, ko, de, fr, es, ru, ar, pt, it, hi
 
 ### 4.3 BaseEngine インターフェース
 
