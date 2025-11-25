@@ -367,16 +367,17 @@ class BaseEngine(ABC):
 ```toml
 [project]
 dependencies = [
-    # 最小限のコア
+    # コア依存
     "numpy",
     "appdirs",
     "tqdm",
+    # VAD（コア機能）
+    "ten-vad",
+    # オーディオキャプチャ（コア機能）
+    "sounddevice",
 ]
 
 [project.optional-dependencies]
-# VAD
-vad = ["ten-vad"]
-
 # エンジン（個別選択可能）
 engine-whisper = ["whisper-s2t"]
 engine-sherpa = ["sherpa-onnx"]
@@ -387,20 +388,17 @@ engine-nemo = ["nemo-toolkit[asr]"]
 translation-google = ["deep-translator"]
 translation-riva = ["nvidia-riva-client"]
 
-# オーディオキャプチャ（オプショナル）
-audio = ["sounddevice"]
-
 # 開発
 dev = ["pytest"]
 
-# 推奨セット
+# 推奨セット（Whisper + Google翻訳）
 recommended = [
-    "livecap-core[vad,engine-whisper,translation-google]"
+    "livecap-cli[engine-whisper,translation-google]"
 ]
 
 # フルセット
 all = [
-    "livecap-core[vad,engine-whisper,engine-sherpa,engine-torch,engine-nemo,translation-google,translation-riva,audio]"
+    "livecap-cli[engine-whisper,engine-sherpa,engine-torch,engine-nemo,translation-google,translation-riva]"
 ]
 ```
 
@@ -408,25 +406,25 @@ all = [
 
 ## 4. オーディオソースの設計方針
 
-### 4.1 コアの責務
+### 4.1 コア機能としてのオーディオソース
 
-コアは **音声データ（`np.ndarray`）を受け取る** ことに専念。
+`audio_sources/` はコア機能として提供（通常インストールに含む）。
 
-```python
-# コアの使用例
-transcriber = StreamTranscriber(engine=engine)
+**CLI 使用例:**
+```bash
+# マイクからリアルタイム文字起こし
+livecap-cli transcribe --realtime --mic 0
 
-# 呼び出し側がオーディオソースを管理
-while True:
-    audio_chunk = get_audio_from_somewhere()  # 外部
-    transcriber.feed_audio(audio_chunk)
-    if result := transcriber.get_result():
-        print(result.text)
+# システム音声からリアルタイム文字起こし
+livecap-cli transcribe --realtime --system
+
+# ファイル文字起こし
+livecap-cli transcribe input.mp4 -o output.srt
 ```
 
-### 4.2 オプショナルなオーディオソース
+### 4.2 オーディオソース実装
 
-`livecap_core.audio_sources` として提供（optional extra）:
+`livecap_core.audio_sources` として提供:
 
 ```python
 class AudioSource(ABC):
@@ -438,6 +436,12 @@ class AudioSource(ABC):
     def close(self) -> None:
         ...
 
+    @classmethod
+    @abstractmethod
+    def list_devices(cls) -> List[DeviceInfo]:
+        """利用可能なデバイス一覧を取得"""
+        ...
+
 class MicrophoneSource(AudioSource):
     """sounddevice ベースのマイク入力"""
     def __init__(self, device_id: Optional[int] = None, sample_rate: int = 16000):
@@ -445,7 +449,7 @@ class MicrophoneSource(AudioSource):
 
 class SystemAudioSource(AudioSource):
     """システム音声キャプチャ"""
-    # Windows: PyWAC
+    # Windows: PyWAC / WASAPI
     # Linux: PulseAudio
     ...
 
@@ -455,10 +459,23 @@ class FileSource(AudioSource):
         ...
 ```
 
-**理由:**
-- テスト容易性（`FileSource` でハードウェアなしテスト可能）
-- クロスプラットフォーム対応を分離
-- 依存関係を軽量に保てる
+### 4.3 ライブラリ API としての使用
+
+CLI を使わず、ライブラリとして直接使用することも可能:
+
+```python
+from livecap_core import StreamTranscriber, EngineFactory
+from livecap_core.audio_sources import MicrophoneSource
+
+engine = EngineFactory.create_engine("whispers2t_base", device="auto")
+engine.load_model()
+
+transcriber = StreamTranscriber(engine=engine)
+mic = MicrophoneSource(device_id=0)
+
+async for result in transcriber.transcribe_stream(mic):
+    print(f"{result.text}")
+```
 
 ---
 
@@ -510,14 +527,11 @@ class FileSource(AudioSource):
    - `auto`: CUDA 利用可能なら GPU、なければ CPU
    - 設定例: `--device auto`
 
-### 7.2 検討中
-
-1. **CLI の機能範囲（オーディオソース取得）**
-   - CLI でマイク/システム音声からの直接リアルタイム文字起こしを提供するか？
-   - **選択肢:**
-     - A) 含める: `livecap-cli transcribe --realtime --device 0`
-     - B) 含めない: CLI はファイル処理のみ、リアルタイムはライブラリ API として提供
-   - **影響:** `audio_sources/` モジュールの位置づけが変わる
+3. **CLI の機能範囲（オーディオソース取得）**
+   - CLI でマイク/システム音声からの直接リアルタイム文字起こしを提供する
+   - 使用例: `livecap-cli transcribe --realtime --mic 0`
+   - `audio_sources/` モジュールはコア機能として含める（オプショナルではない）
+   - 通常インストールでリアルタイム文字起こしが利用可能
 
 ---
 
@@ -535,3 +549,4 @@ class FileSource(AudioSource):
 | 2025-11-25 | 初版作成 |
 | 2025-11-25 | 7章: パッケージ名・デバイス選択を決定済みに移動 |
 | 2025-11-25 | 6章: 互換性維持不要の方針を追記 |
+| 2025-11-25 | 7章: CLI オーディオソース取得を決定済みに移動 |
