@@ -14,7 +14,7 @@ livecap-cli の音声認識パイプライン全体を評価するための**統
 
 **VAD ベンチマーク + ASR ベンチマークを同時実装**し、以下を実現：
 
-- 複数の VAD バックエンド（11構成）を比較評価
+- 複数の VAD バックエンド（10構成）を比較評価
 - 全 ASR エンジン（10種類）の単体性能を評価
 - VAD × ASR の最適な組み合わせを発見
 
@@ -59,7 +59,7 @@ livecap-cli の音声認識パイプライン全体を評価するための**統
 
 | 含む | 含まない |
 |------|----------|
-| VAD × 全ASR評価（11 VAD × 10 ASR） | VAD/ASR の本番切り替え |
+| VAD × 全ASR評価（10 VAD × 10 ASR） | VAD/ASR の本番切り替え |
 | ASR 単体評価（10エンジン） | 新エンジン実装 |
 | 日本語・英語での評価 | 全言語での評価 |
 | CLI ベンチマークツール | GUI |
@@ -249,19 +249,18 @@ class BenchmarkEngineManager:
 │ VAD × ASR 評価マトリクス                                          │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                  │
-│  VAD (11構成)          ASR (10エンジン)         言語 (2+)       │
+│  VAD (10構成)          ASR (10エンジン)         言語 (2+)       │
 │  ┌─────────────┐      ┌─────────────────┐      ┌──────────┐    │
-│  │ Silero v5   │      │ reazonspeech    │──ja──│ Japanese │    │
-│  │ Silero v6   │      │ parakeet_ja     │──ja──│          │    │
-│  │ TenVAD      │  ×   │ parakeet        │──en──│ English  │    │
-│  │ JaVAD tiny  │      │ canary          │──en──│          │    │
-│  │ JaVAD bal.  │      │ voxtral         │──en──│          │    │
-│  │ JaVAD prec. │      │ whispers2t_*    │──all─│          │    │
-│  │ WebRTC 0-3  │      └─────────────────┘      └──────────┘    │
-│  └─────────────┘                                                 │
+│  │ Silero v6   │      │ reazonspeech    │──ja──│ Japanese │    │
+│  │ TenVAD      │      │ parakeet_ja     │──ja──│          │    │
+│  │ JaVAD tiny  │  ×   │ parakeet        │──en──│ English  │    │
+│  │ JaVAD bal.  │      │ canary          │──en──│          │    │
+│  │ JaVAD prec. │      │ voxtral         │──en──│          │    │
+│  │ WebRTC 0-3  │      │ whispers2t_*    │──all─│          │    │
+│  └─────────────┘      └─────────────────┘      └──────────┘    │
 │                                                                  │
-│  Full Matrix: 11 VAD × 10 ASR × 2 Lang = 220 combinations       │
-│  Practical:   11 VAD × 3-4 ASR/lang × 2 Lang ≈ 66-88 tests     │
+│  Full Matrix: 10 VAD × 10 ASR × 2 Lang = 200 combinations       │
+│  Practical:   10 VAD × 3-4 ASR/lang × 2 Lang ≈ 60-80 tests     │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -337,12 +336,11 @@ else:
 
 ### 5.1 ベンチマーク対象
 
-**合計 11 構成**:
+**合計 10 構成**（Silero v5 は v6 の上位互換のため除外）:
 
 | VAD | モデル/設定 | ライセンス | 特徴 |
 |-----|------------|-----------|------|
-| Silero VAD v5 | ONNX | MIT | 旧バージョン、比較用 |
-| Silero VAD v6 | ONNX | MIT | 現在のデフォルト |
+| Silero VAD v6 | ONNX | MIT | 現在のデフォルト、高精度 |
 | TenVAD | - | 独自 | 最軽量・最高速（評価のみ） |
 | JaVAD | tiny | MIT | 0.64s window、即時検出向け |
 | JaVAD | balanced | MIT | 1.92s window、バランス型 |
@@ -453,53 +451,191 @@ def measure_gpu_memory(func):
 
 ## 7. データセット
 
-### 7.1 既存テストアセット
+### 7.1 ディレクトリ構造
 
 ```
-tests/assets/audio/
-├── jsut_basic5000_0001_ja.wav      # 日本語（約3秒）
-├── jsut_basic5000_0001_ja.txt      # トランスクリプト
-├── librispeech_test-clean_1089-134686-0001_en.wav  # 英語（約4秒）
-└── librispeech_test-clean_1089-134686-0001_en.txt  # トランスクリプト
+tests/assets/
+├── audio/                    # git追跡（quickモード用、数ファイル）
+│   ├── ja/
+│   │   ├── jsut_basic5000_0001.wav
+│   │   └── jsut_basic5000_0001.txt
+│   └── en/
+│       ├── librispeech_1089-134686-0001.wav
+│       └── librispeech_1089-134686-0001.txt
+│
+├── prepared/                 # git無視（スクリプトで生成）
+│   ├── ja/                   # 変換済み日本語データ
+│   │   ├── jsut_basic5000_0002.wav
+│   │   └── ...
+│   └── en/                   # 変換済み英語データ
+│       └── ...
+│
+├── source/                   # git無視（ソースコーパス）
+│   ├── jsut/jsut_ver1.1/     # 3.4GB - JSUT v1.1
+│   └── librispeech/test-clean/  # 358MB - LibriSpeech
+│
+└── README.md
 ```
 
-### 7.2 拡張データセット（オプション）
+### 7.2 ソースデータセット
+
+| データセット | 言語 | 形式 | トランスクリプト | ライセンス |
+|-------------|------|------|-----------------|-----------|
+| JSUT v1.1 | ja | WAV | `ID:テキスト` | 非商用 |
+| LibriSpeech test-clean | en | FLAC | `ID TEXT` | CC BY 4.0 |
+
+### 7.3 統一フォーマット仕様
+
+変換スクリプトで以下のフォーマットに統一：
+
+| 項目 | 仕様 |
+|------|------|
+| 音声形式 | WAV, 16kHz, mono, 16bit |
+| 正規化 | ピーク -1dBFS |
+| ファイル名 | `{corpus}_{subset}_{id}.wav` |
+| トランスクリプト | 同名 `.txt`、UTF-8、1行、末尾改行 |
+| フォルダ | `{lang}/` (ja, en) |
+
+### 7.4 実行モードとデータセット
+
+| モード | データソース | ファイル数 | 用途 |
+|--------|-------------|-----------|------|
+| `quick` | `audio/` | ja:2, en:2 | CI smoke test |
+| `standard` | `prepared/` | ja:100, en:100 (調整可) | ローカル開発 |
+| `full` | `prepared/` | 全ファイル | 本格ベンチマーク |
+
+### 7.5 変換スクリプト
 
 ```bash
-export LIVECAP_JSUT_DIR=/path/to/jsut/jsut_ver1.1
-export LIVECAP_LIBRISPEECH_DIR=/path/to/librispeech/test-clean
+# standard モード（各言語100ファイル）
+python scripts/prepare_benchmark_data.py --mode standard
+
+# full モード（全ファイル）
+python scripts/prepare_benchmark_data.py --mode full
+
+# カスタム
+python scripts/prepare_benchmark_data.py --ja-limit 500 --en-limit 200
+```
+
+スクリプトの処理内容：
+
+1. **JSUT**: `transcript_utf8.txt` 読み込み → WAV 正規化 → `prepared/ja/` へ出力
+2. **LibriSpeech**: `*.trans.txt` 読み込み → FLAC→WAV 変換 + 正規化 → `prepared/en/` へ出力
+
+### 7.6 .gitignore 設定
+
+```gitignore
+# ソースコーパス（大規模）
+tests/assets/source/
+
+# 生成データ（ライセンス問題）
+tests/assets/prepared/
 ```
 
 ---
 
 ## 8. 実装ステップ
 
-### 概要: 効率的な実装順序
+### 概要: Phase A/B/C アプローチ
 
 ```
-Step 1: 共通基盤 (common/)     ─┐
-                                ├─ ASRベンチマーク完成
-Step 2: ASR ランナー (asr/)    ─┘
-
-Step 3: VAD バックエンド        ─┐
-                                ├─ VADベンチマーク完成
-Step 4: VAD ランナー (vad/)    ─┘
-
-Step 5: CLI 統合
-Step 6: CI 統合
+┌─────────────────────────────────────────────────────────────┐
+│ Phase A: 基盤構築                                            │
+├─────────────────────────────────────────────────────────────┤
+│ A-1. エンジン動作確認 (self-hosted runner)                   │
+│ A-2. データセット管理実装 (builtin + 外部参照)               │
+│ A-3. 共通モジュール (metrics.py, reports.py)                │
+│ A-4. pyproject.toml に benchmark extra 追加                 │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────┐
+│ Phase B: ASR ベンチマーク                                    │
+├─────────────────────────────────────────────────────────────┤
+│ B-1. ASR runner 実装                                         │
+│ B-2. CLI 実装 (python -m benchmarks.asr)                    │
+│ B-3. 動作するエンジンでベンチマーク実行                       │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────┐
+│ Phase C: VAD ベンチマーク                                    │
+├─────────────────────────────────────────────────────────────┤
+│ C-1. VAD バックエンド実装 (JaVAD, WebRTC)                    │
+│ C-2. VAD runner 実装                                         │
+│ C-3. CI ワークフロー設定                                     │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-### Step 1: 共通基盤構築 (2-3日)
+**実装理由:**
+1. **動作確認が先**: 壊れたエンジンでベンチマークしても無意味
+2. **データセットが先**: ベンチマークの価値はデータ品質で決まる
+3. **ASR が先**: VAD は ASR の上に構築（依存関係）
+
+---
+
+### Phase A: 基盤構築
+
+#### A-1. エンジン動作確認
+
+self-hosted runner で全10エンジンの smoke test を実行:
+
+```bash
+uv run pytest tests/integration/engines -m engine_smoke
+```
+
+動作しないエンジンを特定し、ベンチマーク対象から除外または修正。
+
+#### A-2. データセット管理実装
+
+**対象:**
+- `scripts/prepare_benchmark_data.py` - 変換スクリプト
+- `tests/assets/audio/` の再構成（言語別フォルダ）
+
+**実装内容:**
+
+1. **変換スクリプト作成** (`scripts/prepare_benchmark_data.py`)
+   ```python
+   def prepare_jsut(source_dir, output_dir, limit=None):
+       """JSUT → 統一フォーマット変換"""
+       # transcript_utf8.txt 読み込み
+       # WAV 正規化 (16kHz mono, -1dBFS)
+       # prepared/ja/ へ出力
+
+   def prepare_librispeech(source_dir, output_dir, limit=None):
+       """LibriSpeech → 統一フォーマット変換"""
+       # *.trans.txt 読み込み
+       # FLAC → WAV 変換 + 正規化
+       # prepared/en/ へ出力
+   ```
+
+2. **audio/ 再構成**
+   - 既存ファイルを言語別フォルダに移動
+   - `audio/ja/`, `audio/en/` 構造に変更
+   - 既存テストコードの参照パスを更新
+
+3. **.gitignore 更新**
+   - `tests/assets/prepared/` を追加
+
+#### A-3. 共通モジュール
 
 **対象:** `benchmarks/common/`
 
-1. **metrics.py** - WER/CER/RTF 計算
+1. **metrics.py** - WER/CER/RTF/VRAM 計算
    - jiwer ライブラリ活用
    - テキスト正規化（既存 `tests/utils/text_normalization.py` 活用）
+   - GPU メモリ測定（torch.cuda）
 
 2. **datasets.py** - データセット管理
-   - 音声ファイル + トランスクリプト読み込み
-   - 言語自動検出
+   ```python
+   class DatasetManager:
+       def get_dataset(self, mode: str = "auto") -> Dataset:
+           """
+           mode:
+           - "quick": audio/ (git追跡)
+           - "standard": prepared/ (100ファイル/言語)
+           - "full": prepared/ (全ファイル)
+           - "auto": prepared > audio の順で自動選択
+           """
+   ```
 
 3. **engines.py** - ASR エンジン管理
    - EngineFactory ラッパー
@@ -510,7 +646,11 @@ Step 6: CI 統合
    - Markdown 出力
    - コンソール表形式出力
 
-### Step 2: ASR ベンチマーク実装 (1日)
+---
+
+### Phase B: ASR ベンチマーク
+
+#### B-1. ASR runner 実装
 
 **対象:** `benchmarks/asr/`
 
@@ -576,17 +716,21 @@ class ASRBenchmarkRunner:
             engine.cleanup()
 ```
 
-### Step 3: VAD バックエンド実装 (2日)
+---
+
+### Phase C: VAD ベンチマーク
+
+#### C-1. VAD バックエンド実装
 
 **対象:** `benchmarks/vad/backends/`
 
 1. **base.py** - VADBackend Protocol
-2. **silero.py** - Silero VAD v5/v6
+2. **silero.py** - Silero VAD v6（既存 `livecap_core/vad/backends/silero.py` をラップ）
 3. **javad.py** - JaVAD tiny/balanced/precise
 4. **webrtc.py** - WebRTC VAD mode 0-3
 5. **tenvad.py** - TenVAD
 
-### Step 4: VAD ベンチマーク実装 (1日)
+#### C-2. VAD runner 実装
 
 **対象:** `benchmarks/vad/`
 
@@ -640,14 +784,18 @@ class VADBenchmarkRunner:
         )
 ```
 
-### Step 5: CLI 統合 (0.5日)
+#### B-2. CLI 統合 (ASR)
 
 ```bash
 # ASR ベンチマーク
 python -m benchmarks.asr --all
 python -m benchmarks.asr --engine reazonspeech parakeet_ja --language ja
 python -m benchmarks.asr --mode quick --output results.json
+```
 
+#### C-3. CLI 統合 (VAD) + CI ワークフロー
+
+```bash
 # VAD ベンチマーク
 python -m benchmarks.vad --all
 python -m benchmarks.vad --vad silero_v6 javad_precise --asr reazonspeech
@@ -657,9 +805,7 @@ python -m benchmarks.vad --mode standard --format markdown
 python -m benchmarks --all --output report.md
 ```
 
-### Step 6: CI 統合 (0.5日)
-
-GitHub Actions ワークフロー作成（詳細は後述）。
+GitHub Actions ワークフロー作成（詳細は Section 11）。
 
 ---
 
@@ -771,7 +917,7 @@ Lowest VRAM:       reazonspeech (Peak: 523 MB)
 === VAD Benchmark Results ===
 
 Dataset: tests/assets/audio (2 files)
-Mode: Standard (11 VAD × 3 ASR/lang)
+Mode: Standard (10 VAD × 3 ASR/lang)
 
 ┌─────────────────────────────────────────────────────────────────────────┐
 │ Japanese Results (reazonspeech)                                          │
@@ -937,8 +1083,8 @@ jobs:
 | モード | ASR テスト | VAD テスト | 推定時間 |
 |--------|-----------|-----------|---------|
 | `quick` | 4 (言語別2) | 12 (3 VAD × 2 ASR × 2 lang) | ~5分 |
-| `standard` | 10 (言語別全) | 44-66 (11 VAD × 2-3 ASR × 2 lang) | ~20分 |
-| `full` | 20 (全組み合わせ) | 88+ (11 VAD × 全ASR × 2 lang) | ~60分 |
+| `standard` | 10 (言語別全) | 40-60 (10 VAD × 2-3 ASR × 2 lang) | ~20分 |
+| `full` | 20 (全組み合わせ) | 80+ (10 VAD × 全ASR × 2 lang) | ~60分 |
 
 ---
 
