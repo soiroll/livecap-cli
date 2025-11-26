@@ -16,6 +16,8 @@ TESTS_ROOT = ROOT / "tests"
 if str(TESTS_ROOT) not in sys.path:
     sys.path.insert(0, str(TESTS_ROOT))
 
+import gc
+
 from engines.engine_factory import EngineFactory
 from livecap_core.config.defaults import get_default_config
 from livecap_core.transcription import FileTranscriptionPipeline
@@ -24,6 +26,20 @@ from utils.text_normalization import normalize_text
 pytestmark = pytest.mark.engine_smoke
 
 ASSETS_ROOT = Path(__file__).resolve().parents[2] / "assets" / "audio"
+
+
+def _cleanup_gpu_memory() -> None:
+    """Force GPU memory cleanup to prevent VRAM accumulation between tests."""
+    gc.collect()
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+    except ImportError:
+        pass
+
+
 GPU_ENABLED = os.getenv("LIVECAP_ENABLE_GPU_SMOKE") == "1"
 STRICT = os.getenv("LIVECAP_REQUIRE_ENGINE_SMOKE") == "1"
 
@@ -45,6 +61,7 @@ class EngineSmokeCase:
     audio_stem: str
     device: str | None
     requires_gpu: bool = False
+    min_vram_gb: float | None = None  # Minimum VRAM required in GB
 
 
 @dataclass(frozen=True)
@@ -54,6 +71,9 @@ class ModelCacheStatus:
 
 
 CASES: list[EngineSmokeCase] = [
+    # ==========================================================================
+    # CPU Tests (GitHub-hosted runners)
+    # ==========================================================================
     # ReazonSpeech on CPU is disabled due to sherpa-onnx/onnxruntime ABI issues on hosted runners.
     # See PR #34 for details. It is tested on GPU self-hosted runners instead.
     EngineSmokeCase(
@@ -63,6 +83,9 @@ CASES: list[EngineSmokeCase] = [
         audio_stem="librispeech_test-clean_1089-134686-0001_en",
         device="cpu",
     ),
+    # ==========================================================================
+    # GPU Tests - Japanese Engines (self-hosted runners)
+    # ==========================================================================
     EngineSmokeCase(
         id="reazonspeech_gpu_ja",
         engine="reazonspeech",
@@ -72,7 +95,20 @@ CASES: list[EngineSmokeCase] = [
         requires_gpu=True,
     ),
     EngineSmokeCase(
-        id="whispers2t_gpu_en",
+        id="parakeet_ja_gpu_ja",
+        engine="parakeet_ja",
+        language="ja",
+        audio_stem="jsut_basic5000_0001_ja",
+        device="cuda",
+        requires_gpu=True,
+    ),
+    # Note: whispers2t_base_gpu_ja removed - WhisperS2T Base has low accuracy for Japanese
+    # compared to dedicated Japanese engines (ReazonSpeech, Parakeet JA)
+    # ==========================================================================
+    # GPU Tests - English Engines (self-hosted runners)
+    # ==========================================================================
+    EngineSmokeCase(
+        id="whispers2t_base_gpu_en",
         engine="whispers2t_base",
         language="en",
         audio_stem="librispeech_test-clean_1089-134686-0001_en",
@@ -86,6 +122,58 @@ CASES: list[EngineSmokeCase] = [
         audio_stem="librispeech_test-clean_1089-134686-0001_en",
         device="cuda",
         requires_gpu=True,
+    ),
+    EngineSmokeCase(
+        id="canary_gpu_en",
+        engine="canary",
+        language="en",
+        audio_stem="librispeech_test-clean_1089-134686-0001_en",
+        device="cuda",
+        requires_gpu=True,
+    ),
+    EngineSmokeCase(
+        id="voxtral_gpu_en",
+        engine="voxtral",
+        language="en",
+        audio_stem="librispeech_test-clean_1089-134686-0001_en",
+        device="cuda",
+        requires_gpu=True,
+    ),
+    # ==========================================================================
+    # GPU Tests - WhisperS2T Variants (self-hosted runners)
+    # ==========================================================================
+    EngineSmokeCase(
+        id="whispers2t_tiny_gpu_en",
+        engine="whispers2t_tiny",
+        language="en",
+        audio_stem="librispeech_test-clean_1089-134686-0001_en",
+        device="cuda",
+        requires_gpu=True,
+    ),
+    EngineSmokeCase(
+        id="whispers2t_small_gpu_en",
+        engine="whispers2t_small",
+        language="en",
+        audio_stem="librispeech_test-clean_1089-134686-0001_en",
+        device="cuda",
+        requires_gpu=True,
+    ),
+    EngineSmokeCase(
+        id="whispers2t_medium_gpu_en",
+        engine="whispers2t_medium",
+        language="en",
+        audio_stem="librispeech_test-clean_1089-134686-0001_en",
+        device="cuda",
+        requires_gpu=True,
+    ),
+    EngineSmokeCase(
+        id="whispers2t_large_v3_gpu_en",
+        engine="whispers2t_large_v3",
+        language="en",
+        audio_stem="librispeech_test-clean_1089-134686-0001_en",
+        device="cuda",
+        requires_gpu=True,
+        min_vram_gb=16,  # Large model requires more VRAM than 11.6GB Linux GPU
     ),
 ]
 
@@ -132,6 +220,14 @@ def _guard_gpu(case: EngineSmokeCase) -> None:
             # Allow CPU fallback for ReazonSpeech on GPU runners without CUDA (e.g. Windows CI)
             return
         _skip_or_fail("CUDA is not available on this runner.")
+    # Check VRAM requirement
+    if case.min_vram_gb is not None:
+        total_vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+        if total_vram_gb < case.min_vram_gb:
+            _skip_or_fail(
+                f"Insufficient VRAM: {total_vram_gb:.1f}GB available, "
+                f"{case.min_vram_gb}GB required for {case.engine}"
+            )
 
 
 def _build_config(case: EngineSmokeCase) -> dict:
@@ -234,6 +330,8 @@ def test_engine_smoke_with_real_audio(case: EngineSmokeCase, tmp_path: Path, cap
         cleanup = getattr(engine, "cleanup", None)
         if callable(cleanup):
             cleanup()
+        # Force GPU memory cleanup to prevent VRAM accumulation between tests
+        _cleanup_gpu_memory()
 
     assert result.success, f"Engine {case.engine} failed: {result.error}"
     transcript = " ".join(segment.text for segment in result.subtitles)
