@@ -2,7 +2,8 @@
 
 > **作成日:** 2025-11-25
 > **関連 Issue:** #86
-> **ステータス:** 計画中
+> **ステータス:** 計画確定
+> **最終更新:** 2025-11-26
 
 ---
 
@@ -89,13 +90,14 @@ benchmarks/
     ├── __init__.py
     ├── runner.py              # VAD ベンチマーク実行
     ├── cli.py                 # CLI エントリポイント
+    ├── factory.py             # VADFactory (engines/ パターン踏襲)
     └── backends/              # VAD バックエンド
         ├── __init__.py
         ├── base.py            # VADBackend Protocol
-        ├── silero.py
-        ├── tenvad.py
-        ├── javad.py
-        └── webrtc.py
+        ├── silero.py          # SileroVADBackend
+        ├── javad.py           # JaVADBackend
+        ├── webrtc.py          # WebRTCVADBackend
+        └── tenvad.py          # TenVADBackend
 ```
 
 ### 2.2 評価フローの関係
@@ -350,7 +352,11 @@ else:
 | WebRTC VAD | mode 2 | BSD | 厳格 |
 | WebRTC VAD | mode 3 | BSD | 最も厳格、見逃し多 |
 
-### 5.2 VAD バックエンド Protocol
+### 5.2 VAD バックエンド設計 (engines/ パターン踏襲)
+
+`engines/` の設計パターン（Protocol + Factory）を踏襲し、一貫した API を提供。
+
+#### VADBackend Protocol
 
 ```python
 # benchmarks/vad/backends/base.py
@@ -362,7 +368,11 @@ class VADBackend(Protocol):
 
     @property
     def name(self) -> str:
-        """バックエンド名"""
+        """バックエンド名 (例: 'silero_v6', 'javad_precise')"""
+        ...
+
+    def load(self) -> None:
+        """モデルをロード"""
         ...
 
     def process(
@@ -378,10 +388,95 @@ class VADBackend(Protocol):
         """
         ...
 
-    def reset(self) -> None:
-        """状態をリセット"""
+    def cleanup(self) -> None:
+        """リソース解放"""
         ...
 ```
+
+#### バックエンド実装例
+
+```python
+# benchmarks/vad/backends/silero.py
+class SileroVADBackend:
+    def __init__(self, version: str = "v6", threshold: float = 0.5):
+        self._version = version
+        self._threshold = threshold
+        self._model = None
+
+    @property
+    def name(self) -> str:
+        return f"silero_{self._version}"
+
+    def load(self) -> None:
+        from silero_vad import load_silero_vad
+        self._model = load_silero_vad(onnx=True)
+
+    def process(self, audio: np.ndarray, sample_rate: int = 16000) -> List[Tuple[float, float]]:
+        from silero_vad import get_speech_timestamps
+        timestamps = get_speech_timestamps(audio, self._model, threshold=self._threshold)
+        return [(t['start'] / sample_rate, t['end'] / sample_rate) for t in timestamps]
+
+    def cleanup(self) -> None:
+        self._model = None
+
+
+# benchmarks/vad/backends/javad.py
+class JaVADBackend:
+    def __init__(self, model_name: str = "balanced"):  # tiny, balanced, precise
+        self._model_name = model_name
+        self._processor = None
+
+    @property
+    def name(self) -> str:
+        return f"javad_{self._model_name}"
+
+    def load(self) -> None:
+        from javad import Processor
+        self._processor = Processor(model_name=self._model_name)
+    # ...
+```
+
+#### VADFactory
+
+```python
+# benchmarks/vad/factory.py
+class VADFactory:
+    """VAD バックエンド生成ファクトリ (EngineFactory パターン踏襲)"""
+
+    _REGISTRY = {
+        "silero_v6": lambda: SileroVADBackend(version="v6"),
+        "javad_tiny": lambda: JaVADBackend(model_name="tiny"),
+        "javad_balanced": lambda: JaVADBackend(model_name="balanced"),
+        "javad_precise": lambda: JaVADBackend(model_name="precise"),
+        "webrtc_0": lambda: WebRTCVADBackend(mode=0),
+        "webrtc_1": lambda: WebRTCVADBackend(mode=1),
+        "webrtc_2": lambda: WebRTCVADBackend(mode=2),
+        "webrtc_3": lambda: WebRTCVADBackend(mode=3),
+        "tenvad": lambda: TenVADBackend(),
+    }
+
+    @classmethod
+    def create(cls, vad_id: str) -> VADBackend:
+        if vad_id not in cls._REGISTRY:
+            raise ValueError(f"Unknown VAD: {vad_id}")
+        backend = cls._REGISTRY[vad_id]()
+        backend.load()
+        return backend
+
+    @classmethod
+    def get_available(cls) -> List[str]:
+        return list(cls._REGISTRY.keys())
+```
+
+**設計のメリット:**
+- `engines/` と一貫した設計パターン
+- 新しいVADバックエンドの追加が容易
+- テストしやすい（モック化しやすい）
+
+**既存 `livecap_core/vad/backends/silero.py` との関係:**
+- 既存: ストリーミング処理向け（チャンク → 確率）
+- ベンチマーク用: バッチ処理向け（音声全体 → セグメントリスト）
+- 用途が異なるため、別クラスとして実装
 
 ---
 
@@ -453,6 +548,8 @@ def measure_gpu_memory(func):
 
 ### 7.1 ディレクトリ構造
 
+**決定事項:** 言語別フォルダ構造に統一（`audio/` と `prepared/` で一貫性を持たせる）
+
 ```
 tests/assets/
 ├── audio/                    # git追跡（quickモード用、数ファイル）
@@ -477,14 +574,56 @@ tests/assets/
 └── README.md
 ```
 
-### 7.2 ソースデータセット
+### 7.2 構造変更の影響
+
+現在の `tests/assets/audio/` はフラット構造のため、言語別フォルダへの移行が必要。
+
+**現在の構造:**
+```
+tests/assets/audio/
+├── jsut_basic5000_0001_ja.wav
+├── jsut_basic5000_0001_ja.txt
+├── librispeech_test-clean_1089-134686-0001_en.wav
+└── librispeech_test-clean_1089-134686-0001_en.txt
+```
+
+**変更後:**
+```
+tests/assets/audio/
+├── ja/
+│   ├── jsut_basic5000_0001.wav
+│   └── jsut_basic5000_0001.txt
+└── en/
+    ├── librispeech_1089-134686-0001.wav
+    └── librispeech_1089-134686-0001.txt
+```
+
+**影響を受けるファイル:**
+
+| ファイル | 変更内容 |
+|---------|---------|
+| `tests/audio_sources/test_file_source.py` | パス更新 |
+| `tests/core/test_text_normalization.py` | パス更新 |
+| `tests/integration/engines/test_smoke_engines.py` | パス更新 |
+| `tests/integration/realtime/test_mock_realtime_flow.py` | パス更新 |
+| `tests/integration/realtime/test_e2e_realtime_flow.py` | パス更新 |
+| `examples/realtime/basic_file_transcription.py` | パス更新 |
+| `examples/realtime/custom_vad_config.py` | パス更新 |
+| `examples/realtime/callback_api.py` | パス更新 |
+| `examples/README.md` | パス更新 |
+| `tests/assets/README.md` | ドキュメント更新 |
+| `tests/utils/text_normalization.py` | `get_language_from_filename()` 更新 |
+
+**実装タスク:** Phase A-2 に含める
+
+### 7.3 ソースデータセット
 
 | データセット | 言語 | 形式 | トランスクリプト | ライセンス |
 |-------------|------|------|-----------------|-----------|
 | JSUT v1.1 | ja | WAV | `ID:テキスト` | 非商用 |
 | LibriSpeech test-clean | en | FLAC | `ID TEXT` | CC BY 4.0 |
 
-### 7.3 統一フォーマット仕様
+### 7.4 統一フォーマット仕様
 
 変換スクリプトで以下のフォーマットに統一：
 
@@ -496,7 +635,7 @@ tests/assets/
 | トランスクリプト | 同名 `.txt`、UTF-8、1行、末尾改行 |
 | フォルダ | `{lang}/` (ja, en) |
 
-### 7.4 実行モードとデータセット
+### 7.5 実行モードとデータセット
 
 | モード | データソース | ファイル数 | 用途 |
 |--------|-------------|-----------|------|
@@ -504,7 +643,7 @@ tests/assets/
 | `standard` | `prepared/` | ja:100, en:100 (調整可) | ローカル開発 |
 | `full` | `prepared/` | 全ファイル | 本格ベンチマーク |
 
-### 7.5 変換スクリプト
+### 7.6 変換スクリプト
 
 ```bash
 # standard モード（各言語100ファイル）
@@ -522,7 +661,7 @@ python scripts/prepare_benchmark_data.py --ja-limit 500 --en-limit 200
 1. **JSUT**: `transcript_utf8.txt` 読み込み → WAV 正規化 → `prepared/ja/` へ出力
 2. **LibriSpeech**: `*.trans.txt` 読み込み → FLAC→WAV 変換 + 正規化 → `prepared/en/` へ出力
 
-### 7.6 .gitignore 設定
+### 7.7 .gitignore 設定
 
 ```gitignore
 # ソースコーパス（大規模）
@@ -589,10 +728,22 @@ uv run pytest tests/integration/engines -m engine_smoke
 **対象:**
 - `scripts/prepare_benchmark_data.py` - 変換スクリプト
 - `tests/assets/audio/` の再構成（言語別フォルダ）
+- 既存コードのパス参照修正
 
 **実装内容:**
 
-1. **変換スクリプト作成** (`scripts/prepare_benchmark_data.py`)
+1. **audio/ 再構成** (Section 7.2 参照)
+   - `tests/assets/audio/ja/`, `tests/assets/audio/en/` フォルダ作成
+   - 既存ファイルを言語別フォルダに移動
+   - ファイル名から `_ja`/`_en` サフィックスを削除
+
+2. **既存コード修正** (~11ファイル)
+   - テストコード: パス参照更新
+   - サンプルコード: パス参照更新
+   - `tests/utils/text_normalization.py`: `get_language_from_filename()` をフォルダベースに更新
+   - `tests/assets/README.md`: ドキュメント更新
+
+3. **変換スクリプト作成** (`scripts/prepare_benchmark_data.py`)
    ```python
    def prepare_jsut(source_dir, output_dir, limit=None):
        """JSUT → 統一フォーマット変換"""
@@ -607,12 +758,7 @@ uv run pytest tests/integration/engines -m engine_smoke
        # prepared/en/ へ出力
    ```
 
-2. **audio/ 再構成**
-   - 既存ファイルを言語別フォルダに移動
-   - `audio/ja/`, `audio/en/` 構造に変更
-   - 既存テストコードの参照パスを更新
-
-3. **.gitignore 更新**
+4. **.gitignore 更新**
    - `tests/assets/prepared/` を追加
 
 #### A-3. 共通モジュール
@@ -722,13 +868,16 @@ class ASRBenchmarkRunner:
 
 #### C-1. VAD バックエンド実装
 
-**対象:** `benchmarks/vad/backends/`
+**対象:** `benchmarks/vad/backends/` および `benchmarks/vad/factory.py`
 
-1. **base.py** - VADBackend Protocol
-2. **silero.py** - Silero VAD v6（既存 `livecap_core/vad/backends/silero.py` をラップ）
-3. **javad.py** - JaVAD tiny/balanced/precise
-4. **webrtc.py** - WebRTC VAD mode 0-3
-5. **tenvad.py** - TenVAD
+Section 5.2 の設計（engines/ パターン踏襲）に従って実装:
+
+1. **base.py** - VADBackend Protocol（load, process, cleanup メソッド）
+2. **silero.py** - SileroVADBackend（`get_speech_timestamps()` 使用、バッチ処理向け）
+3. **javad.py** - JaVADBackend（tiny/balanced/precise）
+4. **webrtc.py** - WebRTCVADBackend（mode 0-3）
+5. **tenvad.py** - TenVADBackend
+6. **factory.py** - VADFactory（VADBackend 生成ファクトリ）
 
 #### C-2. VAD runner 実装
 
