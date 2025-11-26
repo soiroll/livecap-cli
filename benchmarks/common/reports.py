@@ -113,6 +113,7 @@ class BenchmarkReporter:
         self.mode = mode
         self.device = device
         self.results: list[BenchmarkResult] = []
+        self.skipped: list[str] = []
         self.timestamp = datetime.utcnow().isoformat() + "Z"
 
     def add_result(self, result: BenchmarkResult) -> None:
@@ -122,6 +123,14 @@ class BenchmarkReporter:
     def add_results(self, results: list[BenchmarkResult]) -> None:
         """Add multiple benchmark results."""
         self.results.extend(results)
+
+    def add_skipped(self, reason: str) -> None:
+        """Record a skipped item.
+
+        Args:
+            reason: Description of what was skipped and why
+        """
+        self.skipped.append(reason)
 
     def to_json(self, indent: int = 2) -> str:
         """Generate JSON report.
@@ -145,67 +154,132 @@ class BenchmarkReporter:
         return json.dumps(report, indent=indent, ensure_ascii=False)
 
     def to_markdown(self) -> str:
-        """Generate Markdown report.
+        """Generate Markdown report with aggregated statistics.
+
+        Shows average WER/CER/RTF per engine×language combination.
 
         Returns:
             Markdown string
         """
         lines = [
-            f"# Benchmark Results",
+            f"# ASR Benchmark Report",
             "",
-            f"**Type:** {self.benchmark_type}",
+            f"**Date:** {self.timestamp}",
             f"**Mode:** {self.mode}",
             f"**Device:** {self.device}",
-            f"**Timestamp:** {self.timestamp}",
             "",
         ]
 
-        # Group results by language
-        by_language = self._group_by_language()
+        # Compute aggregated stats
+        aggregated = self._aggregate_by_engine_language()
 
-        for lang, results in by_language.items():
-            lines.append(f"## {lang.upper()} Results")
+        # Group by language for display
+        by_language: dict[str, list[dict[str, Any]]] = {}
+        for (engine, lang), stats in aggregated.items():
+            if lang not in by_language:
+                by_language[lang] = []
+            by_language[lang].append({"engine": engine, **stats})
+
+        # Results by language
+        lines.append("## Results by Language")
+        lines.append("")
+
+        for lang in sorted(by_language.keys()):
+            engine_stats = by_language[lang]
+            lines.append(f"### {lang.upper()}")
             lines.append("")
 
             # Build table
-            headers = ["Engine", "WER", "CER", "RTF", "VRAM (Peak)"]
+            headers = ["Engine", "CER", "WER", "RTF", "VRAM", "Files"]
             rows = []
-            for r in results:
+            for stats in sorted(engine_stats, key=lambda x: x.get("cer_mean", float("inf"))):
                 row = [
-                    r.engine,
-                    f"{r.wer:.1%}" if r.wer is not None else "-",
-                    f"{r.cer:.1%}" if r.cer is not None else "-",
-                    f"{r.rtf:.3f}" if r.rtf is not None else "-",
-                    f"{r.gpu_memory_peak_mb:.0f} MB" if r.gpu_memory_peak_mb else "-",
+                    stats["engine"],
+                    f"{stats['cer_mean']:.1%}" if stats.get("cer_mean") is not None else "-",
+                    f"{stats['wer_mean']:.1%}" if stats.get("wer_mean") is not None else "-",
+                    f"{stats['rtf_mean']:.3f}" if stats.get("rtf_mean") is not None else "-",
+                    f"{stats['gpu_memory_peak_mb']:.0f}MB" if stats.get("gpu_memory_peak_mb") else "-",
+                    str(stats.get("file_count", 0)),
                 ]
                 rows.append(row)
 
             if TABULATE_AVAILABLE:
                 lines.append(tabulate(rows, headers=headers, tablefmt="pipe"))
             else:
-                # Simple fallback
                 lines.append("| " + " | ".join(headers) + " |")
                 lines.append("|" + "|".join(["---"] * len(headers)) + "|")
                 for row in rows:
                     lines.append("| " + " | ".join(str(c) for c in row) + " |")
 
+            # Best for this language
+            if engine_stats:
+                metric_key = "cer_mean" if lang == "ja" else "wer_mean"
+                metric_name = "CER" if lang == "ja" else "WER"
+                valid = [s for s in engine_stats if s.get(metric_key) is not None]
+                if valid:
+                    best = min(valid, key=lambda x: x[metric_key])
+                    lines.append("")
+                    lines.append(f"**Best {metric_name}:** {best['engine']} ({best[metric_key]:.1%})")
+
             lines.append("")
 
-        # Summary
-        summary = self._generate_summary()
-        if summary:
-            lines.append("## Summary")
+        # Overall summary
+        lines.append("## Summary")
+        lines.append("")
+
+        total_files = sum(s.get("file_count", 0) for s in aggregated.values())
+        total_duration = sum(s.get("total_duration", 0) for s in aggregated.values())
+        lines.append(f"- **Total files:** {total_files}")
+        lines.append(f"- **Total duration:** {total_duration:.1f} sec")
+
+        # Skipped info
+        if self.skipped:
+            lines.append(f"- **Skipped:** {len(self.skipped)}")
             lines.append("")
-            if summary.get("best_by_language"):
-                for lang, best in summary["best_by_language"].items():
-                    lines.append(f"- **Best for {lang}:** {best.get('engine', 'N/A')}")
-            if summary.get("fastest"):
-                lines.append(f"- **Fastest:** {summary['fastest'].get('engine', 'N/A')}")
-            if summary.get("lowest_vram"):
-                lines.append(f"- **Lowest VRAM:** {summary['lowest_vram'].get('engine', 'N/A')}")
+            lines.append("### Skipped Items")
             lines.append("")
+            for item in self.skipped:
+                lines.append(f"- {item}")
+        lines.append("")
 
         return "\n".join(lines)
+
+    def _aggregate_by_engine_language(self) -> dict[tuple[str, str], dict[str, Any]]:
+        """Aggregate results by engine×language.
+
+        Returns:
+            Dictionary mapping (engine, language) to aggregated statistics.
+        """
+        from statistics import mean
+
+        groups: dict[tuple[str, str], list[BenchmarkResult]] = {}
+        for r in self.results:
+            key = (r.engine, r.language)
+            if key not in groups:
+                groups[key] = []
+            groups[key].append(r)
+
+        aggregated: dict[tuple[str, str], dict[str, Any]] = {}
+        for key, results in groups.items():
+            wers = [r.wer for r in results if r.wer is not None]
+            cers = [r.cer for r in results if r.cer is not None]
+            rtfs = [r.rtf for r in results if r.rtf is not None]
+            durations = [r.audio_duration_s for r in results if r.audio_duration_s is not None]
+
+            # Use max GPU peak memory across all files (captures worst-case VRAM usage)
+            gpu_mems = [r.gpu_memory_peak_mb for r in results if r.gpu_memory_peak_mb is not None]
+            gpu_mem = max(gpu_mems) if gpu_mems else None
+
+            aggregated[key] = {
+                "wer_mean": mean(wers) if wers else None,
+                "cer_mean": mean(cers) if cers else None,
+                "rtf_mean": mean(rtfs) if rtfs else None,
+                "gpu_memory_peak_mb": gpu_mem,
+                "file_count": len(results),
+                "total_duration": sum(durations) if durations else 0,
+            }
+
+        return aggregated
 
     def to_console(self) -> None:
         """Print report to console.
@@ -287,6 +361,86 @@ class BenchmarkReporter:
         path = Path(path)
         path.write_text(self.to_markdown(), encoding="utf-8")
 
+    def to_csv(self, engine: str, language: str) -> str:
+        """Generate CSV content for a specific engine and language.
+
+        CSV columns: file_id,reference,transcript,cer,wer,rtf,duration_sec
+
+        Args:
+            engine: Engine identifier
+            language: Language code
+
+        Returns:
+            CSV string with header and data rows
+        """
+        import csv
+        import io
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+
+        # Header
+        writer.writerow([
+            "file_id", "reference", "transcript", "cer", "wer", "rtf", "duration_sec"
+        ])
+
+        # Filter results for this engine+language
+        for r in self.results:
+            if r.engine == engine and r.language == language:
+                writer.writerow([
+                    r.audio_file,
+                    r.reference,
+                    r.transcript,
+                    f"{r.cer:.4f}" if r.cer is not None else "",
+                    f"{r.wer:.4f}" if r.wer is not None else "",
+                    f"{r.rtf:.4f}" if r.rtf is not None else "",
+                    f"{r.audio_duration_s:.2f}" if r.audio_duration_s is not None else "",
+                ])
+
+        return output.getvalue()
+
+    def save_csv(self, directory: Path | str, engine: str, language: str) -> Path:
+        """Save CSV file for a specific engine and language.
+
+        Args:
+            directory: Output directory (will create raw/ subdirectory)
+            engine: Engine identifier
+            language: Language code
+
+        Returns:
+            Path to the created CSV file
+        """
+        directory = Path(directory)
+        raw_dir = directory / "raw"
+        raw_dir.mkdir(parents=True, exist_ok=True)
+
+        filename = f"{engine}_{language}.csv"
+        path = raw_dir / filename
+        path.write_text(self.to_csv(engine, language), encoding="utf-8")
+        return path
+
+    def save_all_csv(self, directory: Path | str) -> list[Path]:
+        """Save CSV files for all engine+language combinations.
+
+        Args:
+            directory: Output directory
+
+        Returns:
+            List of paths to created CSV files
+        """
+        paths = []
+        for (engine, language) in self._get_engine_language_pairs():
+            path = self.save_csv(directory, engine, language)
+            paths.append(path)
+        return paths
+
+    def _get_engine_language_pairs(self) -> list[tuple[str, str]]:
+        """Get unique (engine, language) pairs from results."""
+        pairs: set[tuple[str, str]] = set()
+        for r in self.results:
+            pairs.add((r.engine, r.language))
+        return sorted(pairs)
+
     def _group_by_language(self) -> dict[str, list[BenchmarkResult]]:
         """Group results by language."""
         by_lang: dict[str, list[BenchmarkResult]] = {}
@@ -297,54 +451,81 @@ class BenchmarkReporter:
         return by_lang
 
     def _generate_summary(self) -> dict[str, Any]:
-        """Generate summary statistics."""
+        """Generate summary statistics from aggregated per-engine results.
+
+        Uses _aggregate_by_engine_language() to compute mean metrics per engine,
+        then finds the best engine for each language based on those aggregates.
+        """
         if not self.results:
             return {}
 
         summary: dict[str, Any] = {}
 
-        # Best by language
-        by_lang = self._group_by_language()
+        # Get aggregated stats per engine×language
+        aggregated = self._aggregate_by_engine_language()
+
+        # Best by language (using aggregated means, not per-file results)
         best_by_lang: dict[str, dict[str, Any]] = {}
 
-        for lang, results in by_lang.items():
+        # Group aggregated results by language
+        by_lang: dict[str, list[tuple[str, dict[str, Any]]]] = {}
+        for (engine, lang), stats in aggregated.items():
+            if lang not in by_lang:
+                by_lang[lang] = []
+            by_lang[lang].append((engine, stats))
+
+        for lang, engine_stats in by_lang.items():
             # For Japanese, use CER; for others, use WER
             if lang == "ja":
-                valid = [r for r in results if r.cer is not None]
+                valid = [(e, s) for e, s in engine_stats if s.get("cer_mean") is not None]
                 if valid:
-                    best = min(valid, key=lambda r: r.cer or float("inf"))
+                    best_engine, best_stats = min(
+                        valid, key=lambda x: x[1]["cer_mean"] or float("inf")
+                    )
                     best_by_lang[lang] = {
-                        "engine": best.engine,
-                        "cer": best.cer,
+                        "engine": best_engine,
+                        "cer": best_stats["cer_mean"],
                     }
             else:
-                valid = [r for r in results if r.wer is not None]
+                valid = [(e, s) for e, s in engine_stats if s.get("wer_mean") is not None]
                 if valid:
-                    best = min(valid, key=lambda r: r.wer or float("inf"))
+                    best_engine, best_stats = min(
+                        valid, key=lambda x: x[1]["wer_mean"] or float("inf")
+                    )
                     best_by_lang[lang] = {
-                        "engine": best.engine,
-                        "wer": best.wer,
+                        "engine": best_engine,
+                        "wer": best_stats["wer_mean"],
                     }
 
         if best_by_lang:
             summary["best_by_language"] = best_by_lang
 
-        # Fastest (lowest RTF)
-        valid_rtf = [r for r in self.results if r.rtf is not None]
+        # Fastest (lowest mean RTF across all engine×language)
+        valid_rtf = [
+            (engine, stats) for (engine, _), stats in aggregated.items()
+            if stats.get("rtf_mean") is not None
+        ]
         if valid_rtf:
-            fastest = min(valid_rtf, key=lambda r: r.rtf or float("inf"))
+            fastest_engine, fastest_stats = min(
+                valid_rtf, key=lambda x: x[1]["rtf_mean"] or float("inf")
+            )
             summary["fastest"] = {
-                "engine": fastest.engine,
-                "rtf": fastest.rtf,
+                "engine": fastest_engine,
+                "rtf": fastest_stats["rtf_mean"],
             }
 
-        # Lowest VRAM
-        valid_vram = [r for r in self.results if r.gpu_memory_peak_mb is not None]
+        # Lowest VRAM (using aggregated peak, not per-file)
+        valid_vram = [
+            (engine, stats) for (engine, _), stats in aggregated.items()
+            if stats.get("gpu_memory_peak_mb") is not None
+        ]
         if valid_vram:
-            lowest = min(valid_vram, key=lambda r: r.gpu_memory_peak_mb or float("inf"))
+            lowest_engine, lowest_stats = min(
+                valid_vram, key=lambda x: x[1]["gpu_memory_peak_mb"] or float("inf")
+            )
             summary["lowest_vram"] = {
-                "engine": lowest.engine,
-                "gpu_memory_peak_mb": lowest.gpu_memory_peak_mb,
+                "engine": lowest_engine,
+                "gpu_memory_peak_mb": lowest_stats["gpu_memory_peak_mb"],
             }
 
         return summary
