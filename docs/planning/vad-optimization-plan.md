@@ -2,6 +2,7 @@
 
 > **Status**: ACTIVE
 > **作成日:** 2025-11-28
+> **最終更新:** 2025-11-28
 > **関連 Issue:** #126
 > **前提:** Phase C 完了（VAD Benchmark 実装済み）
 
@@ -33,19 +34,112 @@ Issue #86 の VAD Benchmark (standard mode) で以下の結果を得た：
 
 ---
 
-## 2. 技術設計
+## 2. 設計決定事項
 
-### 2.1 アーキテクチャ
+検討の結果、以下の方針で実装を進める。
+
+### 2.1 データ戦略
+
+| 項目 | 決定 | 理由 |
+|------|------|------|
+| **最適化データ** | quick モード全30ファイル使用 | 分割すると統計的検出力が低下、standard で検証するため過学習は検出可能 |
+| **検証データ** | standard モード（100ファイル） | 最適化とは別データセットで汎化性能を確認 |
+| **言語別最適化** | 言語ごとに独立して最適化 | JA/EN は音韻特性が異なり、最適パラメータも異なる可能性が高い |
+
+### 2.2 最適化対象
+
+| 項目 | 決定 | 理由 |
+|------|------|------|
+| **ASR エンジン** | 1エンジン固定（JA: parakeet_ja, EN: parakeet） | VAD の効果を分離して評価、計算時間削減 |
+| **最適化指標** | CER（JA）/ WER（EN）のみ | RTF は既に十分高速、精度改善に集中 |
+| **RTF** | 最適化対象外 | 全 VAD で 0.001x-0.01x と高速、ボトルネックではない |
+
+### 2.3 VAD 別の扱い
+
+| VAD | 最適化方法 | 理由 |
+|-----|-----------|------|
+| **Silero** | Bayesian (Optuna) | 5パラメータ、連続値多数 |
+| **TenVAD** | Bayesian (Optuna) | 6パラメータ、連続値多数 |
+| **WebRTC** | Bayesian (Optuna) | 5パラメータ（threshold 除外） |
+| **JaVAD** | Grid Search（別処理） | 1パラメータ（model）のみ、3パターン全探索 |
+
+### 2.4 WebRTC の特殊対応
+
+WebRTC は内部でバイナリ判定（0/1出力）するため、`threshold` パラメータは無効：
+
+```python
+# WebRTC の出力（バイナリ）
+def process(self, audio) -> float:
+    is_speech = self._vad.is_speech(...)
+    return 1.0 if is_speech else 0.0
+```
+
+**対応**: WebRTC の探索空間から `threshold` を除外し、以下のみ最適化：
+- `mode`: [0, 1, 2, 3]
+- `frame_duration_ms`: [10, 20, 30]
+- `min_speech_ms`, `min_silence_ms`, `speech_pad_ms`: VADConfig パラメータ
+
+### 2.5 Factory 関数の設計
+
+既存の `create_vad()` を拡張（新関数は作成しない）：
+
+```python
+def create_vad(
+    vad_id: str,
+    backend_params: dict | None = None,
+    vad_config: VADConfig | None = None,
+) -> VADBenchmarkBackend:
+    """
+    VAD バックエンドを作成
+
+    Args:
+        vad_id: VAD 識別子
+        backend_params: カスタム backend パラメータ（レジストリのデフォルトを上書き）
+        vad_config: カスタム VADConfig（セグメント検出パラメータ）
+    """
+```
+
+| メリット |
+|---------|
+| 関数が1つ → 管理が容易 |
+| デフォルト動作維持（None で従来通り） |
+| API がシンプル |
+
+### 2.6 技術的決定
+
+| 項目 | 決定 | 理由 |
+|------|------|------|
+| **試行回数** | 50 trials/VAD×言語 | TPE は 5-6 パラメータで 50-100 で収束 |
+| **Optuna ストレージ** | SQLite | 中断再開可能、履歴分析可能 |
+| **失敗試行** | CER/WER = 1.0 として扱う | セグメント検出失敗は本当に悪い結果 |
+| **乱数シード** | 42（デフォルト） | 再現性確保 |
+
+### 2.7 検証フロー
+
+```
+1. [Baseline] standard モードでデフォルトパラメータの精度を記録
+2. [最適化]  quick モード (30ファイル) で Bayesian 最適化
+3. [検証]    standard モード (100ファイル) で最適化パラメータをテスト
+4. [比較]    改善率 = (baseline - optimized) / baseline
+```
+
+---
+
+## 3. 技術設計
+
+### 3.1 アーキテクチャ
 
 ```
 benchmarks/
-└── optimization/                    # 新規モジュール
-    ├── __init__.py                  # 公開 API
-    ├── param_spaces.py              # パラメータ探索空間定義
-    ├── objective.py                 # 目的関数（CER/WER 最小化）
-    ├── vad_optimizer.py             # Optuna ベースの最適化器
-    ├── presets.py                   # 最適化結果の保存/読込
-    └── __main__.py                  # CLI エントリポイント
+├── vad/
+│   └── factory.py               # create_vad() 拡張
+└── optimization/                # 新規モジュール
+    ├── __init__.py              # 公開 API
+    ├── param_spaces.py          # パラメータ探索空間定義
+    ├── objective.py             # 目的関数（CER/WER 最小化）
+    ├── vad_optimizer.py         # Optuna ベースの最適化器
+    ├── presets.py               # 最適化結果の保存/読込
+    └── __main__.py              # CLI エントリポイント
 
 tests/benchmark_tests/optimization/  # テスト
     ├── __init__.py
@@ -53,171 +147,50 @@ tests/benchmark_tests/optimization/  # テスト
     └── test_objective.py
 ```
 
-### 2.2 最適化対象パラメータ
+### 3.2 最適化対象パラメータ
 
 #### Silero VAD (5 パラメータ)
 
-| パラメータ | 型 | 探索範囲 | ステップ |
-|-----------|-----|----------|----------|
-| `threshold` | float | 0.2 - 0.8 | - |
-| `neg_threshold` | float | 0.1 - 0.5 | - |
-| `min_speech_ms` | int | 100 - 500 | 50 |
-| `min_silence_ms` | int | 30 - 300 | 10 |
-| `speech_pad_ms` | int | 30 - 200 | 10 |
+| パラメータ | 型 | 探索範囲 | ステップ | 対象 |
+|-----------|-----|----------|----------|------|
+| `threshold` | float | 0.2 - 0.8 | - | Backend |
+| `neg_threshold` | float | 0.1 - 0.5 | - | VADConfig |
+| `min_speech_ms` | int | 100 - 500 | 50 | VADConfig |
+| `min_silence_ms` | int | 30 - 300 | 10 | VADConfig |
+| `speech_pad_ms` | int | 30 - 200 | 10 | VADConfig |
 
 #### TenVAD (6 パラメータ)
 
-| パラメータ | 型 | 探索範囲 | ステップ |
-|-----------|-----|----------|----------|
-| `hop_size` | categorical | [160, 256] | - |
-| `threshold` | float | 0.2 - 0.8 | - |
-| `neg_threshold` | float | 0.1 - 0.5 | - |
-| `min_speech_ms` | int | 100 - 500 | 50 |
-| `min_silence_ms` | int | 30 - 300 | 10 |
-| `speech_pad_ms` | int | 30 - 200 | 10 |
+| パラメータ | 型 | 探索範囲 | ステップ | 対象 |
+|-----------|-----|----------|----------|------|
+| `hop_size` | categorical | [160, 256] | - | Backend |
+| `threshold` | float | 0.2 - 0.8 | - | Backend |
+| `neg_threshold` | float | 0.1 - 0.5 | - | VADConfig |
+| `min_speech_ms` | int | 100 - 500 | 50 | VADConfig |
+| `min_silence_ms` | int | 30 - 300 | 10 | VADConfig |
+| `speech_pad_ms` | int | 30 - 200 | 10 | VADConfig |
 
-#### WebRTC VAD (5 パラメータ)
+#### WebRTC VAD (5 パラメータ) ※threshold 除外
 
-| パラメータ | 型 | 探索範囲 | ステップ |
-|-----------|-----|----------|----------|
-| `mode` | categorical | [0, 1, 2, 3] | - |
-| `frame_duration_ms` | categorical | [10, 20, 30] | - |
-| `min_speech_ms` | int | 100 - 500 | 50 |
-| `min_silence_ms` | int | 30 - 300 | 10 |
-| `speech_pad_ms` | int | 30 - 200 | 10 |
+| パラメータ | 型 | 探索範囲 | ステップ | 対象 |
+|-----------|-----|----------|----------|------|
+| `mode` | categorical | [0, 1, 2, 3] | - | Backend |
+| `frame_duration_ms` | categorical | [10, 20, 30] | - | Backend |
+| `min_speech_ms` | int | 100 - 500 | 50 | VADConfig |
+| `min_silence_ms` | int | 30 - 300 | 10 | VADConfig |
+| `speech_pad_ms` | int | 30 - 200 | 10 | VADConfig |
 
-#### JaVAD (1 パラメータ)
+#### JaVAD (Grid Search で別処理)
 
-| パラメータ | 型 | 探索範囲 |
-|-----------|-----|----------|
+| パラメータ | 型 | 選択肢 |
+|-----------|-----|--------|
 | `model` | categorical | [tiny, balanced, precise] |
 
-> **Note**: JaVAD は VADConfig 非対応のため、プリセット選択のみ。
-> Grid Search で十分なため、Bayesian 最適化の優先度は低い。
+> **Note**: JaVAD は VADConfig 非対応。3パターンを全探索。
 
-### 2.3 目的関数設計
-
-```python
-def objective(trial: optuna.Trial) -> float:
-    """
-    1 trial = 1 パラメータセットの評価
-
-    Returns:
-        float: CER (JA) または WER (EN) - 最小化対象
-    """
-    # 1. パラメータ取得
-    params = suggest_params(trial, vad_type=self.vad_type)
-
-    # 2. VAD 作成（カスタムパラメータ適用）
-    vad = create_vad_with_params(self.vad_type, params)
-
-    # 3. ミニベンチマーク実行
-    #    - ASR エンジンは事前ロード済み（trial 間で共有）
-    #    - Quick mode 相当のデータセット使用
-    results = []
-    for audio_file in self.dataset:
-        segments = vad.process_audio(audio_file.audio, audio_file.sample_rate)
-        transcript = self._transcribe_segments(segments, audio_file)
-
-        if self.language == "ja":
-            score = calculate_cer(audio_file.transcript, transcript, lang="ja")
-        else:
-            score = calculate_wer(audio_file.transcript, transcript, lang="en")
-        results.append(score)
-
-    # 4. 平均スコア返却
-    return statistics.mean(results)
-```
-
-### 2.4 実行時間見積もり
-
-| 項目 | 時間 |
-|------|------|
-| 1 trial (30 ファイル処理 = quick モード) | ~45 秒 |
-| 50 trials | ~38 分 |
-| 1 VAD × 2 言語 | ~76 分 |
-| 4 VAD × 2 言語 | **~300 分 (5 時間)** |
-
-> **Note**: quick モード = 30 ファイル/言語（最適化に最適なサイズ）
-
-### 2.5 GPU メモリ管理
+### 3.3 目的関数設計
 
 ```python
-class VADOptimizer:
-    def __init__(self, ...):
-        # ASR エンジンは1回だけロード
-        self.engine = self._load_engine(engine_id)
-        self.engine.load_model()
-
-    def _objective(self, trial):
-        # VAD は毎回再作成（軽量）
-        vad = create_vad_with_params(...)
-
-        # ASR エンジンは共有（GPU メモリ節約）
-        for audio_file in self.dataset:
-            transcript = self.engine.transcribe(...)
-
-        # VAD のみ解放
-        del vad
-```
-
----
-
-## 3. 実装フェーズ
-
-### Phase D-1: コアフレームワーク構築
-
-**目標**: 最適化の基盤モジュールを作成
-
-#### D-1a: パラメータ空間定義
-
-```python
-# benchmarks/optimization/param_spaces.py
-
-from typing import Any
-import optuna
-
-PARAM_SPACES: dict[str, dict[str, dict[str, Any]]] = {
-    "silero": {
-        "threshold": {"type": "float", "low": 0.2, "high": 0.8},
-        "neg_threshold": {"type": "float", "low": 0.1, "high": 0.5},
-        "min_speech_ms": {"type": "int", "low": 100, "high": 500, "step": 50},
-        "min_silence_ms": {"type": "int", "low": 30, "high": 300, "step": 10},
-        "speech_pad_ms": {"type": "int", "low": 30, "high": 200, "step": 10},
-    },
-    "tenvad": {
-        "hop_size": {"type": "categorical", "choices": [160, 256]},
-        "threshold": {"type": "float", "low": 0.2, "high": 0.8},
-        # ... 他のパラメータ
-    },
-    # ... 他の VAD
-}
-
-def suggest_params(trial: optuna.Trial, vad_type: str) -> dict[str, Any]:
-    """Trial からパラメータを提案"""
-    space = PARAM_SPACES[vad_type]
-    params = {}
-
-    for name, config in space.items():
-        if config["type"] == "float":
-            params[name] = trial.suggest_float(name, config["low"], config["high"])
-        elif config["type"] == "int":
-            params[name] = trial.suggest_int(
-                name, config["low"], config["high"], step=config.get("step", 1)
-            )
-        elif config["type"] == "categorical":
-            params[name] = trial.suggest_categorical(name, config["choices"])
-
-    return params
-```
-
-#### D-1b: 目的関数実装
-
-```python
-# benchmarks/optimization/objective.py
-
-from benchmarks.common import calculate_cer, calculate_wer
-
 class VADObjective:
     """VAD 最適化の目的関数"""
 
@@ -234,18 +207,24 @@ class VADObjective:
         self.dataset = dataset
 
     def __call__(self, trial: optuna.Trial) -> float:
-        params = suggest_params(trial, self.vad_type)
-        vad = create_vad_with_params(self.vad_type, params)
+        # 1. パラメータ提案
+        backend_params, vad_config = suggest_params(trial, self.vad_type)
 
+        # 2. VAD 作成
+        vad = create_vad(self.vad_type, backend_params, vad_config)
+
+        # 3. 評価
         scores = []
         for audio_file in self.dataset:
-            # VAD 処理
             segments = vad.process_audio(audio_file.audio, audio_file.sample_rate)
 
-            # ASR 処理
+            # セグメントなし = 完全失敗
+            if not segments:
+                scores.append(1.0)
+                continue
+
             transcript = self._transcribe_segments(segments, audio_file)
 
-            # スコア計算
             if self.language == "ja":
                 score = calculate_cer(audio_file.transcript, transcript, lang="ja")
             else:
@@ -255,38 +234,153 @@ class VADObjective:
         return statistics.mean(scores)
 ```
 
-#### D-1c: 最適化器実装
+### 3.4 実行時間見積もり
+
+| 項目 | 時間 |
+|------|------|
+| 1 trial (30 ファイル処理) | ~45 秒 |
+| 50 trials | ~38 分 |
+| 1 VAD × 2 言語 | ~76 分 |
+| 3 VAD (Silero, TenVAD, WebRTC) × 2 言語 | **~228 分 (3.8 時間)** |
+| JaVAD Grid Search (3 patterns × 2 言語) | ~15 分 |
+| **合計** | **~4 時間** |
+
+### 3.5 GPU メモリ管理
+
+```python
+class VADOptimizer:
+    def __init__(self, ...):
+        # ASR エンジンは1回だけロード（trial 間で共有）
+        self.engine = self._load_engine(engine_id)
+        self.engine.load_model()
+
+    def _objective(self, trial):
+        # VAD は毎回再作成（軽量）
+        vad = create_vad(...)
+
+        # ASR エンジンは共有（GPU メモリ節約）
+        for audio_file in self.dataset:
+            transcript = self.engine.transcribe(...)
+
+        # VAD のみ解放
+        del vad
+```
+
+---
+
+## 4. 実装フェーズ
+
+### Phase D-1: 基盤構築
+
+#### D-1a: Factory 拡張（最優先）
+
+目的関数が依存するため、最初に実装。
+
+```python
+# benchmarks/vad/factory.py
+
+def create_vad(
+    vad_id: str,
+    backend_params: dict | None = None,
+    vad_config: VADConfig | None = None,
+) -> VADBenchmarkBackend:
+    """VAD バックエンドを作成（カスタムパラメータ対応）"""
+    if vad_id not in VAD_REGISTRY:
+        raise ValueError(f"Unknown VAD: {vad_id}")
+
+    config = VAD_REGISTRY[vad_id]
+
+    if config["type"] == "javad":
+        return _create_javad(config, backend_params)
+    else:
+        return _create_protocol_vad(config, backend_params, vad_config)
+```
+
+#### D-1b: パラメータ空間定義
+
+```python
+# benchmarks/optimization/param_spaces.py
+
+PARAM_SPACES = {
+    "silero": {
+        "backend": {
+            "threshold": {"type": "float", "low": 0.2, "high": 0.8},
+        },
+        "vad_config": {
+            "neg_threshold": {"type": "float", "low": 0.1, "high": 0.5},
+            "min_speech_ms": {"type": "int", "low": 100, "high": 500, "step": 50},
+            "min_silence_ms": {"type": "int", "low": 30, "high": 300, "step": 10},
+            "speech_pad_ms": {"type": "int", "low": 30, "high": 200, "step": 10},
+        },
+    },
+    "tenvad": {
+        "backend": {
+            "hop_size": {"type": "categorical", "choices": [160, 256]},
+            "threshold": {"type": "float", "low": 0.2, "high": 0.8},
+        },
+        "vad_config": {
+            "neg_threshold": {"type": "float", "low": 0.1, "high": 0.5},
+            "min_speech_ms": {"type": "int", "low": 100, "high": 500, "step": 50},
+            "min_silence_ms": {"type": "int", "low": 30, "high": 300, "step": 10},
+            "speech_pad_ms": {"type": "int", "low": 30, "high": 200, "step": 10},
+        },
+    },
+    "webrtc": {
+        "backend": {
+            "mode": {"type": "categorical", "choices": [0, 1, 2, 3]},
+            "frame_duration_ms": {"type": "categorical", "choices": [10, 20, 30]},
+        },
+        "vad_config": {
+            # threshold は除外（WebRTC はバイナリ出力）
+            "min_speech_ms": {"type": "int", "low": 100, "high": 500, "step": 50},
+            "min_silence_ms": {"type": "int", "low": 30, "high": 300, "step": 10},
+            "speech_pad_ms": {"type": "int", "low": 30, "high": 200, "step": 10},
+        },
+    },
+}
+
+def suggest_params(trial: optuna.Trial, vad_type: str) -> tuple[dict, VADConfig]:
+    """Trial からパラメータを提案"""
+    space = PARAM_SPACES[vad_type]
+
+    backend_params = _suggest_group(trial, space.get("backend", {}))
+    vad_config_params = _suggest_group(trial, space.get("vad_config", {}))
+
+    vad_config = VADConfig(**vad_config_params) if vad_config_params else None
+
+    return backend_params, vad_config
+```
+
+#### D-1c: 目的関数 + 最適化器
 
 ```python
 # benchmarks/optimization/vad_optimizer.py
 
-import optuna
-from dataclasses import dataclass
-
-@dataclass
-class OptimizationResult:
-    """最適化結果"""
-    vad_type: str
-    language: str
-    best_params: dict[str, Any]
-    best_score: float
-    n_trials: int
-    study: optuna.Study
-
 class VADOptimizer:
     """VAD パラメータ最適化器"""
+
+    # 言語別推奨エンジン
+    DEFAULT_ENGINES = {
+        "ja": "parakeet_ja",
+        "en": "parakeet",
+    }
 
     def __init__(
         self,
         vad_type: str,
         language: str,
-        engine_id: str,
+        engine_id: str | None = None,
         device: str = "cuda",
     ):
         self.vad_type = vad_type
         self.language = language
+
+        # エンジン選択（指定なしなら推奨エンジン）
+        engine_id = engine_id or self.DEFAULT_ENGINES[language]
         self.engine = self._load_engine(engine_id, device)
-        self.dataset = self._load_dataset(language)
+
+        # データセット読み込み（quick モード = 30ファイル）
+        self.dataset = self._load_dataset(language, mode="quick")
 
     def optimize(
         self,
@@ -295,6 +389,10 @@ class VADOptimizer:
         storage: str | None = None,
     ) -> OptimizationResult:
         """最適化を実行"""
+
+        # デフォルトストレージ
+        if storage is None:
+            storage = "sqlite:///benchmark_results/optimization/studies.db"
 
         sampler = optuna.samplers.TPESampler(seed=seed)
         study = optuna.create_study(
@@ -330,40 +428,43 @@ class VADOptimizer:
 # tests/benchmark_tests/optimization/test_param_spaces.py
 
 def test_suggest_silero_params():
-    """Silero パラメータ提案のテスト"""
+    """Silero パラメータ提案"""
     study = optuna.create_study()
     trial = study.ask()
 
-    params = suggest_params(trial, "silero")
+    backend_params, vad_config = suggest_params(trial, "silero")
 
-    assert "threshold" in params
-    assert 0.2 <= params["threshold"] <= 0.8
-    assert "min_speech_ms" in params
-    assert params["min_speech_ms"] % 50 == 0
+    assert "threshold" in backend_params
+    assert 0.2 <= backend_params["threshold"] <= 0.8
+    assert vad_config is not None
+    assert 100 <= vad_config.min_speech_ms <= 500
+
+def test_suggest_webrtc_no_threshold():
+    """WebRTC は threshold を含まない"""
+    study = optuna.create_study()
+    trial = study.ask()
+
+    backend_params, vad_config = suggest_params(trial, "webrtc")
+
+    assert "threshold" not in backend_params
+    assert "mode" in backend_params
 ```
 
 ### Phase D-2: CLI 実装
 
-**目標**: コマンドラインから最適化を実行可能に
-
-#### D-2a: CLI エントリポイント
-
 ```python
 # benchmarks/optimization/__main__.py
 
-import argparse
-import json
-from pathlib import Path
-
 def main():
     parser = argparse.ArgumentParser(description="VAD Parameter Optimization")
-    parser.add_argument("--vad", required=True, choices=["silero", "tenvad", "webrtc"])
+    parser.add_argument("--vad", required=True,
+                        choices=["silero", "tenvad", "webrtc"])
     parser.add_argument("--language", required=True, choices=["ja", "en"])
-    parser.add_argument("--engine", required=True, help="ASR engine ID")
+    parser.add_argument("--engine", help="ASR engine (default: auto)")
     parser.add_argument("--n-trials", type=int, default=50)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--output", type=Path, help="Output JSON path")
-    parser.add_argument("--storage", help="Optuna storage URL (e.g., sqlite:///study.db)")
+    parser.add_argument("--storage", help="Optuna storage URL")
 
     args = parser.parse_args()
 
@@ -379,7 +480,6 @@ def main():
         storage=args.storage,
     )
 
-    # 結果出力
     print(f"\n=== Optimization Complete ===")
     print(f"VAD: {result.vad_type}")
     print(f"Language: {result.language}")
@@ -388,45 +488,30 @@ def main():
 
     if args.output:
         save_result(result, args.output)
-
-if __name__ == "__main__":
-    main()
 ```
 
-#### D-2b: 使用例
+使用例：
 
 ```bash
-# Silero × 日本語 の最適化
-python -m benchmarks.optimization \
-  --vad silero \
-  --language ja \
-  --engine parakeet_ja \
-  --n-trials 50 \
-  --output results/silero_ja.json \
-  --storage sqlite:///optimization.db
+# Silero × 日本語
+python -m benchmarks.optimization --vad silero --language ja
 
-# TenVAD × 英語 の最適化
-python -m benchmarks.optimization \
-  --vad tenvad \
-  --language en \
-  --engine parakeet \
-  --n-trials 50 \
-  --output results/tenvad_en.json
+# TenVAD × 英語（カスタムエンジン）
+python -m benchmarks.optimization --vad tenvad --language en --engine whispers2t_large_v3
+
+# 試行回数を増やす
+python -m benchmarks.optimization --vad webrtc --language ja --n-trials 100
 ```
 
-### Phase D-3: 結果の統合
+### Phase D-3: 結果統合
 
-**目標**: 最適化結果を livecap_core で利用可能に
-
-#### D-3a: プリセット管理
+#### D-3a: プリセット保存/読込
 
 ```python
 # benchmarks/optimization/presets.py
 
-import json
-from pathlib import Path
-
-PRESETS_FILE = Path(__file__).parent.parent.parent / "config" / "vad_optimized_presets.json"
+PRESETS_DIR = Path(__file__).parent.parent.parent / "config"
+PRESETS_FILE = PRESETS_DIR / "vad_optimized_presets.json"
 
 def save_preset(vad_type: str, language: str, params: dict) -> None:
     """最適化結果をプリセットとして保存"""
@@ -434,100 +519,94 @@ def save_preset(vad_type: str, language: str, params: dict) -> None:
 
     if vad_type not in presets:
         presets[vad_type] = {}
-    presets[vad_type][language] = params
+    presets[vad_type][language] = {
+        "params": params,
+        "optimized_at": datetime.now().isoformat(),
+    }
 
+    PRESETS_DIR.mkdir(parents=True, exist_ok=True)
     with open(PRESETS_FILE, "w") as f:
         json.dump(presets, f, indent=2)
-
-def load_preset(vad_type: str, language: str) -> dict | None:
-    """プリセットを読み込み"""
-    presets = load_all_presets()
-    return presets.get(vad_type, {}).get(language)
 ```
 
-#### D-3b: プリセットファイル形式
-
-```json
-// config/vad_optimized_presets.json
-{
-  "silero": {
-    "ja": {
-      "threshold": 0.38,
-      "neg_threshold": 0.23,
-      "min_speech_ms": 200,
-      "min_silence_ms": 62,
-      "speech_pad_ms": 85
-    },
-    "en": {
-      "threshold": 0.52,
-      "neg_threshold": 0.37,
-      "min_speech_ms": 150,
-      "min_silence_ms": 95,
-      "speech_pad_ms": 70
-    }
-  },
-  "tenvad": {
-    "ja": {
-      "hop_size": 160,
-      "threshold": 0.42,
-      // ...
-    }
-  }
-}
-```
-
-#### D-3c: Factory 統合
+#### D-3b: Factory への統合
 
 ```python
-# benchmarks/vad/factory.py への追加
+# benchmarks/vad/factory.py
 
 def create_vad(
     vad_id: str,
-    language: str | None = None,
+    backend_params: dict | None = None,
+    vad_config: VADConfig | None = None,
     use_optimized: bool = False,
+    language: str | None = None,
 ) -> VADBenchmarkBackend:
     """
     VAD バックエンドを作成
 
     Args:
         vad_id: VAD 識別子
-        language: 言語コード（最適化プリセット使用時に必要）
+        backend_params: カスタムパラメータ
+        vad_config: カスタム VADConfig
         use_optimized: True の場合、最適化済みプリセットを使用
+        language: 言語（use_optimized=True 時に必要）
     """
+    # 最適化プリセット使用
     if use_optimized and language:
         preset = load_preset(vad_id, language)
         if preset:
-            return _create_vad_with_params(vad_id, preset)
+            backend_params = preset.get("backend_params", backend_params)
+            vad_config = VADConfig(**preset.get("vad_config", {}))
 
-    return _create_vad_default(vad_id)
+    # 通常の作成処理
+    ...
 ```
 
 ### Phase D-4: 検証
 
-**目標**: 最適化の効果を検証
-
-#### D-4a: Standard モードで再ベンチマーク
+#### D-4a: Baseline 記録
 
 ```bash
-# 最適化パラメータでベンチマーク実行
-python -m benchmarks.vad \
-  --mode standard \
-  --use-optimized \
-  --languages ja en
+# 最適化前の精度を記録
+python -m benchmarks.vad --mode standard --language ja en
+# → baseline_results/ に保存
 ```
 
-#### D-4b: 比較レポート作成
+#### D-4b: 最適化実行
 
-| VAD | 言語 | Before | After | 改善率 |
-|-----|------|--------|-------|--------|
-| Silero | JA | 8.5% CER | ? | ? |
-| Silero | EN | 4.9% WER | ? | ? |
-| TenVAD | JA | 8.2% CER | ? | ? |
-| TenVAD | EN | 6.2% WER | ? | ? |
+```bash
+# 全 VAD × 言語の最適化
+for vad in silero tenvad webrtc; do
+  for lang in ja en; do
+    python -m benchmarks.optimization --vad $vad --language $lang
+  done
+done
+
+# JaVAD は Grid Search
+python -m benchmarks.vad --mode quick --vad javad_tiny javad_balanced javad_precise
+```
+
+#### D-4c: 検証ベンチマーク
+
+```bash
+# 最適化パラメータで standard モード実行
+python -m benchmarks.vad --mode standard --use-optimized --language ja en
+```
+
+#### D-4d: 比較レポート
+
+| VAD | 言語 | Baseline | Optimized | 改善率 |
+|-----|------|----------|-----------|--------|
+| Silero | JA | ? CER | ? CER | ?% |
+| Silero | EN | ? WER | ? WER | ?% |
+| TenVAD | JA | ? CER | ? CER | ?% |
+| TenVAD | EN | ? WER | ? WER | ?% |
+| WebRTC | JA | ? CER | ? CER | ?% |
+| WebRTC | EN | ? WER | ? WER | ?% |
 
 ---
 
-## 4. 依存関係
+## 5. 依存関係
 
 ### pyproject.toml への追加
 
@@ -540,20 +619,22 @@ optimization = [
 
 ---
 
-## 5. リスクと対策
+## 6. リスクと対策
 
 | リスク | 影響 | 対策 |
 |--------|------|------|
-| **過学習** | 検証データで性能低下 | Quick で最適化 → Standard で検証 |
+| **過学習** | 検証データで性能低下 | quick で最適化 → standard で検証 |
 | **局所最適** | 真の最適解を逃す | n_trials 増加、複数 seed 実行 |
 | **GPU メモリ不足** | 最適化中断 | Engine 共有、適切な解放 |
 | **実行時間超過** | CI タイムアウト | 手動トリガー、分割実行 |
+| **セグメント検出失敗** | 評価不能 | CER/WER = 1.0 としてペナルティ |
 
 ---
 
-## 6. タスクリスト
+## 7. タスクリスト
 
-### Phase D-1: コアフレームワーク
+### Phase D-1: 基盤構築
+- [ ] `benchmarks/vad/factory.py` 拡張（create_vad に params 対応追加）
 - [ ] `benchmarks/optimization/__init__.py` 作成
 - [ ] `benchmarks/optimization/param_spaces.py` 実装
 - [ ] `benchmarks/optimization/objective.py` 実装
@@ -565,22 +646,24 @@ optimization = [
 - [ ] `benchmarks/optimization/__main__.py` 実装
 - [ ] Silero × JA で end-to-end テスト
 - [ ] 他の VAD × 言語に拡張
-- [ ] (Optional) GitHub Actions workflow 作成
 
 ### Phase D-3: 結果統合
 - [ ] `benchmarks/optimization/presets.py` 実装
-- [ ] `config/vad_optimized_presets.json` フォーマット設計
+- [ ] `config/vad_optimized_presets.json` 作成
 - [ ] `benchmarks/vad/factory.py` に `use_optimized` 追加
+- [ ] `benchmarks/vad/cli.py` に `--use-optimized` オプション追加
 
 ### Phase D-4: 検証
+- [ ] Baseline 記録（standard モード）
 - [ ] 全 VAD × 言語の最適化実行
+- [ ] JaVAD Grid Search 実行
 - [ ] Standard モードで検証ベンチマーク
 - [ ] 比較レポート作成
 - [ ] Issue #126 クローズ
 
 ---
 
-## 7. 参考資料
+## 8. 参考資料
 
 - [Optuna Documentation](https://optuna.readthedocs.io/)
 - [TPE Sampler](https://optuna.readthedocs.io/en/stable/reference/samplers/generated/optuna.samplers.TPESampler.html)
