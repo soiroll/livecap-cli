@@ -45,8 +45,8 @@ jobs:
           echo "$PWD/.venv/Scripts" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
           Write-Host "Installing dependencies..."
-          # Install vad-all extra (includes all VAD backends: silero, webrtc, tenvad, javad)
-          uv pip install -e ".[vad-all]"
+          # Install vad-tenvad extra only (javad requires Rust compiler for tokenizers)
+          uv pip install -e ".[vad,vad-webrtc,vad-tenvad]"
           uv pip install numpy scipy
 
           Write-Host "Setup complete"
