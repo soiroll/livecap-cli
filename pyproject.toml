@@ -118,6 +118,11 @@ livecap-core = "livecap_core.cli:main"
   # Includes benchmark dependencies
   "jiwer>=3.0",
   "tqdm>=4.0",
+  # VAD backends (required for VAD parameter optimization)
+  "silero-vad>=5.1",
+  "webrtcvad>=2.0.10",
+  "ten-vad @ git+https://github.com/TEN-framework/ten-vad.git@a64b408d9ff89cd92bd0772ed99f9d58b7a005b1",
+  "javad",
 ]
 
 [tool.setuptools.packages.find]
