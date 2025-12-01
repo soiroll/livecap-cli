@@ -1,7 +1,16 @@
 # 言語別VAD最適化 実装計画
 
 Issue: #139
-Status: **PLANNING**
+Status: **IN PROGRESS**
+
+## 進捗
+
+| Phase | 内容 | 状態 | PR |
+|-------|------|------|-----|
+| Phase 0 | 前提タスク（presets更新、VAD依存関係バンドル） | ✅ 完了 | #143 |
+| Phase 1 | VADProcessor.from_language() 実装 | 未着手 | - |
+| Phase 2 | 統合テスト | 未着手 | - |
+| Phase 3 | ドキュメント・仕上げ | 未着手 | - |
 
 ## 確定事項
 
@@ -321,28 +330,31 @@ class TestVADProcessorFromLanguageIntegration:
 
 ## 完了条件
 
-- [ ] `presets.py` のスコアがPhase D-4の結果に更新されている
-- [ ] `pyproject.toml` の `[vad]` に TenVAD/WebRTC が含まれている
-- [ ] `VADProcessor.from_language("ja")` で TenVAD が使用される
-- [ ] `VADProcessor.from_language("en")` で WebRTC が使用される
-- [ ] `VADProcessor.from_language("zh")` で `ValueError` が発生する
-- [ ] VAD未インストール時に `ImportError` が発生する（解決策付きメッセージ）
-- [ ] StreamTranscriberへの`vad_processor`注入で正常動作
-- [ ] 全テストがパス
-- [ ] CI がパス
-- [ ] ドキュメント更新済み
+- [x] `presets.py` のスコアがPhase D-4の結果に更新されている (Phase 0)
+- [x] `pyproject.toml` の `[vad]` に TenVAD/WebRTC が含まれている (Phase 0)
+- [ ] `VADProcessor.from_language("ja")` で TenVAD が使用される (Phase 1)
+- [ ] `VADProcessor.from_language("en")` で WebRTC が使用される (Phase 1)
+- [ ] `VADProcessor.from_language("zh")` で `ValueError` が発生する (Phase 1)
+- [ ] VAD未インストール時に `ImportError` が発生する（解決策付きメッセージ） (Phase 1)
+- [ ] StreamTranscriberへの`vad_processor`注入で正常動作 (Phase 2)
+- [ ] 全テストがパス (Phase 2)
+- [x] CI がパス (Phase 0)
+- [ ] ドキュメント更新済み (Phase 3)
 
 ## 関連ファイル
 
-| ファイル | 変更内容 |
-|---------|---------|
-| `livecap_core/vad/presets.py` | スコア更新（Phase 0） |
-| `pyproject.toml` | VAD依存関係更新（Phase 0） |
-| `livecap_core/vad/processor.py` | `from_language()` 追加（Phase 1） |
-| `tests/vad/test_processor.py` | ユニットテスト追加（Phase 1） |
-| `tests/vad/test_from_language_integration.py` | 統合テスト追加（Phase 2） |
-| `docs/guides/vad-optimization.md` | 使用例追加（Phase 3） |
-| `examples/realtime/custom_vad_config.py` | `--language`オプション追加（Phase 3） |
+| ファイル | 変更内容 | Phase | 状態 |
+|---------|---------|-------|------|
+| `livecap_core/vad/presets.py` | スコア更新 | 0 | ✅ |
+| `pyproject.toml` | VAD依存関係更新、libc++コメント | 0 | ✅ |
+| `.github/workflows/core-tests.yml` | libc++インストール追加 | 0 | ✅ |
+| `README.md` | VAD説明更新、libc++手順追加 | 0 | ✅ |
+| `tests/core/vad/test_presets.py` | Phase D-4スコア対応 | 0 | ✅ |
+| `livecap_core/vad/processor.py` | `from_language()` 追加 | 1 | 未着手 |
+| `tests/vad/test_processor.py` | ユニットテスト追加 | 1 | 未着手 |
+| `tests/vad/test_from_language_integration.py` | 統合テスト追加 | 2 | 未着手 |
+| `docs/guides/vad-optimization.md` | 使用例追加 | 3 | 未着手 |
+| `examples/realtime/custom_vad_config.py` | `--language`オプション追加 | 3 | 未着手 |
 
 **変更なし**: `livecap_core/transcription/stream.py` - Option B採用により変更不要
 
@@ -416,18 +428,27 @@ VAD_OPTIMIZED_PRESETS = {
 
 ### タスク追加
 
-**Phase 0: 前提タスク** (推定: 1h)
+**Phase 0: 前提タスク** ✅ 完了 (PR #143)
 
-- [ ] `livecap_core/vad/presets.py`
-  - [ ] metadata.score をPhase D-4の結果で更新
-  - [ ] コメントに測定条件を追記（standard mode, parakeet系エンジン）
-- [ ] `pyproject.toml` VAD依存関係の更新
-  - [ ] `[vad]` に webrtcvad, ten-vad を追加（JaVAD以外を必須化）
-  - [ ] `[vad-javad]` を新設（オプショナル）
-- [ ] 動作確認
-  - [ ] `get_best_vad_for_language("ja")` → tenvad
-  - [ ] `get_best_vad_for_language("en")` → webrtc
-  - [ ] `uv sync --extra vad` で TenVAD/WebRTC がインストールされる
+- [x] `livecap_core/vad/presets.py`
+  - [x] metadata.score をPhase D-4の結果で更新
+  - [x] コメントに測定条件を追記（standard mode, parakeet系エンジン）
+- [x] `pyproject.toml` VAD依存関係の更新
+  - [x] `[vad]` に webrtcvad, ten-vad を追加（JaVAD以外を必須化）
+  - [x] `[vad-javad]` を維持（オプショナル）
+  - [x] libc++要件をコメントで追記
+- [x] `.github/workflows/core-tests.yml`
+  - [x] libc++1インストールステップ追加（TenVADテストを有効化）
+- [x] `README.md`
+  - [x] VAD extra説明を更新（silero-vad, webrtcvad, ten-vad）
+  - [x] libc++インストール手順を追加
+- [x] `tests/core/vad/test_presets.py`
+  - [x] Phase D-4スコアに合わせてテスト更新
+- [x] 動作確認
+  - [x] `get_best_vad_for_language("ja")` → tenvad
+  - [x] `get_best_vad_for_language("en")` → webrtc
+  - [x] `uv sync --extra vad` で TenVAD/WebRTC がインストールされる
+  - [x] CIでTenVADテストが実行される（OSErrorスキップではなく実際にテスト）
 
 ## 参考
 
