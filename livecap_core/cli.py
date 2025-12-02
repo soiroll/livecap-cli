@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import argparse
 import json
-from dataclasses import asdict, dataclass
-from typing import Any, Dict
+from dataclasses import asdict, dataclass, field
+from typing import Any, Dict, Optional
 
 from .i18n import I18nDiagnostics, diagnose as diagnose_i18n
 from .resources import (
@@ -25,8 +25,11 @@ class DiagnosticReport:
     cache_root: str
     ffmpeg_path: str | None
     resource_root: str | None
-    i18n: I18nDiagnostics
+    cuda_available: bool
+    cuda_device: str | None
+    vad_backends: list[str]
     available_engines: list[str]
+    i18n: I18nDiagnostics
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=False, indent=2)
@@ -51,6 +54,34 @@ def _get_available_engines() -> list[str]:
         return []
 
 
+def _get_cuda_info() -> tuple[bool, str | None]:
+    """Get CUDA availability and device name."""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            device_name = torch.cuda.get_device_name(0)
+            return True, device_name
+        return False, None
+    except ImportError:
+        return False, None
+    except Exception:
+        return False, None
+
+
+def _get_vad_backends() -> list[str]:
+    """Get list of available VAD backend types."""
+    try:
+        from .vad.presets import get_available_presets
+        # Extract unique VAD types from presets
+        presets = get_available_presets()
+        vad_types = sorted(set(vad_type for vad_type, _ in presets))
+        return vad_types
+    except ImportError:
+        return []
+    except Exception:
+        return []
+
+
 def diagnose(
     *,
     ensure_ffmpeg: bool = False,
@@ -64,25 +95,30 @@ def diagnose(
     except FileNotFoundError:
         resolved_root = None
 
+    cuda_available, cuda_device = _get_cuda_info()
+
     return DiagnosticReport(
         models_root=str(model_manager.models_root),
         cache_root=str(model_manager.cache_root),
         ffmpeg_path=_ensure_ffmpeg(ensure_ffmpeg),
         resource_root=resolved_root,
-        i18n=diagnose_i18n(),
+        cuda_available=cuda_available,
+        cuda_device=cuda_device,
+        vad_backends=_get_vad_backends(),
         available_engines=_get_available_engines(),
+        i18n=diagnose_i18n(),
     )
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="livecap-core",
-        description="Inspect and validate a LiveCap Core installation.",
+        description="LiveCap Core installation diagnostics.",
     )
     parser.add_argument(
         "--info",
         action="store_true",
-        help="Show detailed information about available ASR engines.",
+        help="Show installation info (FFmpeg, CUDA, VAD backends, ASR engines, etc.)",
     )
     parser.add_argument(
         "--ensure-ffmpeg",
@@ -98,40 +134,44 @@ def main(argv: list[str] | None = None) -> int:
 
     report = diagnose(ensure_ffmpeg=args.ensure_ffmpeg)
 
-    if args.info:
-        try:
-            from engines.metadata import EngineMetadata
-            print("Available ASR Engines:")
-            for engine_id, info in EngineMetadata.get_all().items():
-                print(f"  {engine_id}:")
-                print(f"    Name: {info.display_name}")
-                print(f"    Languages: {', '.join(info.supported_languages)}")
-                if info.default_params:
-                    print(f"    Default params: {info.default_params}")
-                print()
-        except ImportError:
-            print("Error: Could not import engines module")
-            return 1
-
     if args.as_json:
         print(report.to_json())
-    elif not args.info:
-        print("LiveCap Core diagnostics:")
-        print(f"  Models root: {report.models_root}")
-        print(f"  Cache root: {report.cache_root}")
-        print(f"  FFmpeg path: {report.ffmpeg_path or 'not detected'}")
-        print(f"  Available engines: {len(report.available_engines)}")
-        translator = report.i18n.translator
-        if translator.registered:
-            extras = f" extras={','.join(translator.extras)}" if translator.extras else ""
-            name = translator.name or "translator"
-            print(f"  Translator: {name}{extras}")
-        else:
-            print("  Translator: not registered (fallback only)")
-        if report.i18n.fallback_count:
-            print(f"  i18n fallback keys: {report.i18n.fallback_count} registered")
-        else:
-            print("  i18n fallback keys: none registered")
+        return 0
+
+    # --info shows full diagnostics (same as default but may be extended)
+    # Default output also shows diagnostics per Phase 2 plan
+    print("LiveCap Core diagnostics:")
+    print(f"  FFmpeg: {report.ffmpeg_path or 'not detected'}")
+    print(f"  Models root: {report.models_root}")
+    print(f"  Cache root: {report.cache_root}")
+
+    # CUDA info
+    if report.cuda_available:
+        cuda_info = f"yes ({report.cuda_device})" if report.cuda_device else "yes"
+        print(f"  CUDA available: {cuda_info}")
+    else:
+        print("  CUDA available: no")
+
+    # VAD backends
+    if report.vad_backends:
+        print(f"  VAD backends: {', '.join(report.vad_backends)}")
+    else:
+        print("  VAD backends: none detected")
+
+    # ASR engines
+    if report.available_engines:
+        print(f"  ASR engines: {', '.join(report.available_engines)}")
+    else:
+        print("  ASR engines: none detected")
+
+    # Translator
+    translator = report.i18n.translator
+    if translator.registered:
+        extras = f" extras={','.join(translator.extras)}" if translator.extras else ""
+        name = translator.name or "translator"
+        print(f"  Translator: {name}{extras}")
+    else:
+        print("  Translator: not registered (fallback only)")
 
     return 0
 

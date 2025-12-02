@@ -17,3 +17,8 @@ def test_cli_diagnose_reports_i18n(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     assert report.i18n.fallback_count >= 0
     assert report.i18n.translator.registered in (True, False)
     assert isinstance(report.available_engines, list)
+    # Phase 2: New diagnostic fields
+    assert isinstance(report.cuda_available, bool)
+    assert isinstance(report.vad_backends, list)
+    # cuda_device can be None or str
+    assert report.cuda_device is None or isinstance(report.cuda_device, str)
