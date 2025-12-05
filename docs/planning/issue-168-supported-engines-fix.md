@@ -34,8 +34,8 @@
 
 646行のモジュールで実際に必要なのは：
 
-1. **言語コード正規化**: `"ZH-TW"` → `"zh-TW"`, `"zh"` → `"zh-CN"`
-2. **ASRコード変換**: `"zh-CN"` → `"zh"`, `"pt-BR"` → `"pt"`
+1. **言語コード正規化**: `"ZH-TW"` → `"zh-TW"`（大文字小文字の正規化）
+2. **エンジン別変換**: 各エンジン/サービスの要件に合わせた言語コード変換
 
 これらは**単純なマッピングテーブル**で実現可能。
 
@@ -80,96 +80,68 @@
 
 ### 3.3 言語コード形式の比較
 
-| 形式 | 説明 | 例 | 使用サービス |
-|-----|------|---|-------------|
-| **ISO 639-1** | 2文字言語コード | `zh`, `pt`, `es` | Whisper, Canary, Voxtral |
-| **BCP-47** | 言語-地域コード | `zh-CN`, `pt-BR`, `es-ES` | Google Translate, RIVA |
-
-### 3.4 変換ルール設計
-
-#### ASR エンジン向け変換（`to_asr_code`）
-
-UI/ユーザー入力（BCP-47）から ASR エンジン用（ISO 639-1）への変換：
-
-```python
-_ASR_CODE_MAP = {
-    # 中国語: 地域コード → 基本コード
-    "zh-CN": "zh",
-    "zh-TW": "zh",
-
-    # ポルトガル語: 地域コード → 基本コード
-    "pt-BR": "pt",
-    "pt-PT": "pt",
-
-    # スペイン語: 地域コード → 基本コード
-    "es-ES": "es",
-    "es-US": "es",
-
-    # フランス語: 地域コード → 基本コード
-    "fr-FR": "fr",
-    "fr-CA": "fr",
-
-    # 英語: 地域コード → 基本コード
-    "en-US": "en",
-    "en-GB": "en",
-}
-```
-
-#### Google Translate 向け変換（将来実装）
-
-```python
-# ISO 639-1 → Google レガシーコード
-_GOOGLE_LEGACY_CODES = {
-    "he": "iw",  # Hebrew
-    "jv": "jw",  # Javanese
-}
-# BCP-47形式はそのまま使用（zh-CN, zh-TW, pt-BR 等）
-```
-
-#### NVIDIA RIVA 向け変換（将来実装）
-
-```python
-# ISO 639-1 → BCP-47 (デフォルト国コード付与)
-_RIVA_DEFAULT_REGION = {
-    "en": "en-US",
-    "ja": "ja-JP",
-    "zh": "zh-CN",
-    "pt": "pt-BR",
-    "es": "es-ES",
-    "fr": "fr-FR",
-    "de": "de-DE",
-    "it": "it-IT",
-    "ko": "ko-KR",
-    "ru": "ru-RU",
-    "ar": "ar-AR",
-    "hi": "hi-IN",
-}
-```
+| 形式 | 説明 | 例 | 地域情報 | 使用サービス |
+|-----|------|---|---------|-------------|
+| **ISO 639-1** | 2文字言語コード | `zh`, `pt`, `es` | なし | Whisper, Canary, Voxtral |
+| **BCP-47** | 言語-地域コード | `zh-CN`, `pt-BR`, `es-ES` | あり | Google Translate, RIVA |
 
 ---
 
 ## 4. 設計
 
-### 4.1 統合先
+### 4.1 設計方針
 
-`metadata.py` 内の `EngineMetadata` クラスに言語コード変換機能を追加。
+**ユーザー入力**: ISO 639-1 と BCP-47 の両方を受け付ける
+- シンプルな言語（`ja`, `en`）は2文字で十分
+- 地域が重要な場合（`zh-CN`/`zh-TW`）は BCP-47 で明示
+
+**内部処理**: 入力された地域情報を保持し、エンジン別に適切な形式に変換
+
+```
+ユーザー入力: "ja" or "zh-CN" or "zh-TW"（両形式OK）
+      ↓ normalize_language()（形式正規化、地域情報は保持）
+内部表現: "ja", "zh-CN", "zh-TW"
+      ↓ エンジン別変換
+- to_asr_code():    "ja", "zh", "zh"       # ISO 639-1
+- to_riva_code():   "ja-JP", "zh-CN", "zh-TW"  # BCP-47
+- to_google_code(): "ja", "zh-CN", "zh-TW"     # そのまま or レガシー変換
+```
 
 ### 4.2 API設計
 
 ```python
 # 新しいAPI（metadata.py）
-EngineMetadata.normalize_language("ZH-TW")  # → "zh-TW"
-EngineMetadata.normalize_language("zh")     # → "zh-CN"
-EngineMetadata.to_asr_code("zh-CN")         # → "zh"
-EngineMetadata.to_asr_code("pt-BR")         # → "pt"
+
+# 正規化（地域情報を保持）
+EngineMetadata.normalize_language("JA")      # → "ja"
+EngineMetadata.normalize_language("zh-TW")   # → "zh-TW"（保持）
+EngineMetadata.normalize_language("ZH-CN")   # → "zh-CN"（保持）
+
+# ASRエンジン向け（ISO 639-1）
+EngineMetadata.to_asr_code("ja")      # → "ja"
+EngineMetadata.to_asr_code("zh-CN")   # → "zh"（地域除去）
+EngineMetadata.to_asr_code("zh-TW")   # → "zh"（地域除去）
+
+# RIVA向け（BCP-47）
+EngineMetadata.to_riva_code("ja")      # → "ja-JP"（デフォルト地域付与）
+EngineMetadata.to_riva_code("zh-CN")   # → "zh-CN"（そのまま）
+EngineMetadata.to_riva_code("zh-TW")   # → "zh-TW"（そのまま）
+
+# Google Translate向け
+EngineMetadata.to_google_code("ja")    # → "ja"
+EngineMetadata.to_google_code("he")    # → "iw"（レガシー変換）
+EngineMetadata.to_google_code("zh-CN") # → "zh-CN"（そのまま）
+
+# エンジン検索
 EngineMetadata.get_engines_for_language("zh-CN")  # → ["whispers2t"]
 ```
 
 ### 4.3 設計理由
 
-- 言語コード変換は `get_engines_for_language()` でのみ使用される
-- 新しいクラスを増やさずに責務を集約
-- シンプルなAPI（`EngineMetadata` が言語・エンジン情報の Single Source of Truth）
+- **地域情報の保持**: RIVA等で地域区別が必要なため、正規化時に地域を捨てない
+- **エンジン別変換**: 各エンジン/サービスの要件に合わせて適切に変換
+- **ユーザーフレンドリー**: 両形式を受け付けることで柔軟性を確保
+- **Single Source of Truth**: `EngineMetadata` が言語・エンジン情報を一元管理
 
 ---
 
@@ -192,23 +164,19 @@ EngineMetadata.get_engines_for_language("zh-CN")  # → ["whispers2t"]
 class EngineMetadata:
     """エンジンメタデータの中央管理"""
 
-    # === 言語コード変換 ===
+    # === 言語コード変換テーブル ===
 
-    _LANG_ALIASES: Dict[str, str] = {
-        # 短縮形 → 標準形
-        "zh": "zh-CN",
-        "cn": "zh-CN",
-        "tw": "zh-TW",
-        "hk": "zh-TW",
-        "zh-hk": "zh-TW",
-        "zh-hans": "zh-CN",
-        "zh-hant": "zh-TW",
-        "en-us": "en",
-        "en-gb": "en",
+    # サポートされる言語コード（ISO 639-1 および BCP-47）
+    _SUPPORTED_LANGUAGE_CODES: Set[str] = {
+        # ISO 639-1（地域なし）
+        "ja", "en", "ko", "de", "fr", "es", "ru", "ar", "pt", "it", "hi", "nl",
+        # BCP-47（地域あり）
+        "zh-CN", "zh-TW", "pt-BR", "pt-PT", "es-ES", "es-US",
+        "fr-FR", "fr-CA", "en-US", "en-GB",
     }
 
-    _ASR_CODE_MAP: Dict[str, str] = {
-        # UI言語コード → ASR言語コード（ISO 639-1）
+    # BCP-47 → ISO 639-1 変換（ASRエンジン用）
+    _TO_ISO639_MAP: Dict[str, str] = {
         "zh-CN": "zh",
         "zh-TW": "zh",
         "pt-BR": "pt",
@@ -221,19 +189,36 @@ class EngineMetadata:
         "en-GB": "en",
     }
 
-    # サポートされるUI言語コード（正規化の対象）
-    _UI_LANGUAGE_CODES: Set[str] = {
-        "ja", "en", "zh-CN", "zh-TW", "ko", "de", "fr", "es",
-        "es-ES", "es-US", "ru", "ar", "pt", "pt-BR", "it", "hi", "nl",
+    # ISO 639-1 → BCP-47 変換（RIVA用：デフォルト地域）
+    _DEFAULT_REGION_MAP: Dict[str, str] = {
+        "ja": "ja-JP",
+        "en": "en-US",
+        "zh": "zh-CN",
+        "pt": "pt-BR",
+        "es": "es-ES",
+        "fr": "fr-FR",
+        "de": "de-DE",
+        "it": "it-IT",
+        "ko": "ko-KR",
+        "ru": "ru-RU",
+        "ar": "ar-AR",
+        "hi": "hi-IN",
+        "nl": "nl-NL",
+    }
+
+    # Google Translate レガシーコード
+    _GOOGLE_LEGACY_CODES: Dict[str, str] = {
+        "he": "iw",  # Hebrew
+        "jv": "jw",  # Javanese
     }
 
     @classmethod
     def normalize_language(cls, code: str) -> Optional[str]:
         """
-        言語コードを正規化
+        言語コードを正規化（地域情報は保持）
 
         Args:
-            code: 入力言語コード（"ja", "ZH-TW", "zh" 等）
+            code: 入力言語コード（"ja", "ZH-TW", "zh-cn" 等）
 
         Returns:
             正規化された言語コード、または None
@@ -243,49 +228,116 @@ class EngineMetadata:
             "ja"
             >>> EngineMetadata.normalize_language("zh-TW")
             "zh-TW"
-            >>> EngineMetadata.normalize_language("zh")
+            >>> EngineMetadata.normalize_language("ZH-CN")
             "zh-CN"
         """
         if not code:
             return None
 
-        code_lower = code.lower().strip()
+        code = code.strip()
 
         # 完全一致（大文字小文字無視）
-        for ui_code in cls._UI_LANGUAGE_CODES:
-            if ui_code.lower() == code_lower:
-                return ui_code
+        for supported in cls._SUPPORTED_LANGUAGE_CODES:
+            if supported.lower() == code.lower():
+                return supported
 
-        # エイリアス
-        if code_lower in cls._LANG_ALIASES:
-            return cls._LANG_ALIASES[code_lower]
+        # セパレータ正規化（zh_tw → zh-TW）
+        normalized = code.replace("_", "-")
+        for supported in cls._SUPPORTED_LANGUAGE_CODES:
+            if supported.lower() == normalized.lower():
+                return supported
 
-        # セパレータ正規化（zh_tw → zh-tw）
-        normalized = code_lower.replace("_", "-")
-        if normalized in cls._LANG_ALIASES:
-            return cls._LANG_ALIASES[normalized]
-
-        return None
+        # 未知のコードはそのまま返す（バリデーションは各エンジンで）
+        return code.lower()
 
     @classmethod
     def to_asr_code(cls, code: str) -> str:
         """
-        UI言語コード → ASR言語コードに変換
+        ASRエンジン用言語コードに変換（ISO 639-1）
+
+        BCP-47 形式の地域コードを除去して ISO 639-1 に変換
 
         Args:
-            code: UI言語コード（"zh-CN", "pt-BR" 等）
+            code: 言語コード（"ja", "zh-CN", "pt-BR" 等）
 
         Returns:
-            ASR言語コード（"zh", "pt" 等）
+            ISO 639-1 言語コード（"ja", "zh", "pt" 等）
 
         Examples:
-            >>> EngineMetadata.to_asr_code("zh-CN")
-            "zh"
             >>> EngineMetadata.to_asr_code("ja")
             "ja"
+            >>> EngineMetadata.to_asr_code("zh-CN")
+            "zh"
+            >>> EngineMetadata.to_asr_code("zh-TW")
+            "zh"
         """
         normalized = cls.normalize_language(code) or code
-        return cls._ASR_CODE_MAP.get(normalized, normalized)
+        return cls._TO_ISO639_MAP.get(normalized, normalized)
+
+    @classmethod
+    def to_riva_code(cls, code: str) -> str:
+        """
+        NVIDIA RIVA用言語コードに変換（BCP-47）
+
+        ISO 639-1 にはデフォルト地域を付与、BCP-47 はそのまま
+
+        Args:
+            code: 言語コード（"ja", "zh-CN" 等）
+
+        Returns:
+            BCP-47 言語コード（"ja-JP", "zh-CN" 等）
+
+        Examples:
+            >>> EngineMetadata.to_riva_code("ja")
+            "ja-JP"
+            >>> EngineMetadata.to_riva_code("zh-CN")
+            "zh-CN"
+            >>> EngineMetadata.to_riva_code("zh-TW")
+            "zh-TW"
+        """
+        normalized = cls.normalize_language(code) or code
+
+        # 既に BCP-47 形式の場合はそのまま
+        if "-" in normalized:
+            return normalized
+
+        # ISO 639-1 にはデフォルト地域を付与
+        return cls._DEFAULT_REGION_MAP.get(normalized, normalized)
+
+    @classmethod
+    def to_google_code(cls, code: str) -> str:
+        """
+        Google Translate用言語コードに変換
+
+        レガシーコード変換を適用（he→iw 等）
+
+        Args:
+            code: 言語コード（"ja", "he", "zh-CN" 等）
+
+        Returns:
+            Google Translate用言語コード
+
+        Examples:
+            >>> EngineMetadata.to_google_code("ja")
+            "ja"
+            >>> EngineMetadata.to_google_code("he")
+            "iw"
+            >>> EngineMetadata.to_google_code("zh-CN")
+            "zh-CN"
+        """
+        normalized = cls.normalize_language(code) or code
+
+        # ISO 639-1 部分を抽出してレガシー変換をチェック
+        base_code = normalized.split("-")[0] if "-" in normalized else normalized
+        if base_code in cls._GOOGLE_LEGACY_CODES:
+            legacy = cls._GOOGLE_LEGACY_CODES[base_code]
+            # 地域コードがある場合は付け直す
+            if "-" in normalized:
+                region = normalized.split("-")[1]
+                return f"{legacy}-{region}"
+            return legacy
+
+        return normalized
 ```
 
 ### 5.3 whispers2t_engine.py の修正
@@ -349,8 +401,8 @@ asr_code = EngineMetadata.to_asr_code("ja")
 | 項目 | Before | After |
 |-----|--------|-------|
 | `languages.py` | 646行 | 0行（削除） |
-| `metadata.py` 追加行 | - | ~80行 |
-| **純削減** | - | **~566行** |
+| `metadata.py` 追加行 | - | ~120行 |
+| **純削減** | - | **~526行** |
 
 ---
 
@@ -360,6 +412,8 @@ asr_code = EngineMetadata.to_asr_code("ja")
 - [ ] `livecap_core/__init__.py` から `Languages` が削除されている
 - [ ] `EngineMetadata.normalize_language()` が実装されている
 - [ ] `EngineMetadata.to_asr_code()` が実装されている
+- [ ] `EngineMetadata.to_riva_code()` が実装されている
+- [ ] `EngineMetadata.to_google_code()` が実装されている
 - [ ] `whispers2t_engine.py` が `EngineMetadata` を使用している
 - [ ] `EngineMetadata.get_engines_for_language()` が自己完結している
 - [ ] ドキュメントが更新されている
