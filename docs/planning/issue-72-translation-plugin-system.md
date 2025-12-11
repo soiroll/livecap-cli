@@ -23,10 +23,12 @@
 | `translation/impl/riva_instruct.py` | ✅ 完了 | 4 | RivaInstructTranslator |
 | `utils/__init__.py` VRAM 追加 | ✅ 完了 | 1 | get_available_vram 等 |
 | `pyproject.toml` 依存追加 | ✅ 完了 | 1 | translation-local, translation-riva |
-| `livecap_core/__init__.py` エクスポート | ✅ 完了 | 2 | TranslatorFactory 等 |
+| `translation/__init__.py` エクスポート | ✅ 完了 | 2 | TranslatorFactory 等（※1） |
 | `tests/core/translation/` | ✅ 完了 | 2-4 | ユニットテスト (120+) |
 | `tests/conftest.py` マーカー追加 | ✅ 完了 | 2 | network, slow, gpu |
 | `examples/translation/` | ✅ 完了 | 4 | サンプルスクリプト (5件) |
+
+**※1**: 翻訳 API は `livecap_core.translation` パッケージからインポート。トップレベル `livecap_core` へのエクスポートは Phase 5 で検討。
 
 ### Phase 5 未実装
 
@@ -35,6 +37,7 @@
 | `StreamTranscriber` 翻訳統合 | ❌ 未実装 | 5 | リアルタイム翻訳対応 |
 | `TranscriptionResult` 翻訳フィールド | ❌ 未実装 | 5 | 翻訳結果の統合 |
 | `tests/integration/test_translation.py` | ❌ 未実装 | 5 | ASR+翻訳統合テスト |
+| `livecap_core/__init__.py` 翻訳エクスポート | ❌ 検討中 | 5 | トップレベルへのエクスポート（オプション） |
 
 ### 既存コード（参照のみ）
 
@@ -1281,10 +1284,20 @@ StreamTranscriber にリアルタイム翻訳機能を統合し、ASR + 翻訳�
        confidence: float = 1.0
        language: str = ""
        source_id: str = "default"
-       # Phase 5 追加
+       # Phase 5 追加（末尾にオプショナルフィールドとして追加）
        translated_text: Optional[str] = None
        target_language: Optional[str] = None
    ```
+
+   **移行方針（後方互換性）**:
+   - 新フィールドは **末尾にデフォルト値付きで追加** → 既存コードへの影響なし
+   - 現行コードベースの `TranscriptionResult` 生成箇所を確認:
+     - `livecap_core/transcription/stream.py` (2箇所): **キーワード引数使用** ✅
+     - `tests/transcription/test_result.py` (9箇所): **キーワード引数使用** ✅
+     - `tests/integration/` (1箇所): **キーワード引数使用** ✅
+   - **位置引数での生成箇所なし** → 安全に追加可能
+   - 型チェック: `Optional[str] = None` により mypy 互換
+   - テスト追加: 新フィールドの有無両方をカバーするテストを追加
 
 2. **StreamTranscriber の拡張**
    ```python
@@ -1906,16 +1919,17 @@ def test_translation_result_to_event_dict():
 - [x] VRAM 確認ユーティリティが追加されている
 - [x] VRAM 不足時の警告が実装されている
 - [x] ユニットテストがパスする（120+ テスト）
-- [x] `livecap_core` から export されている
+- [x] `livecap_core.translation` から export されている
 - [x] サンプルスクリプトが作成されている
 
 ### Phase 5（❌ 未完了）
 
-- [ ] `TranscriptionResult` に翻訳フィールドが追加されている
+- [ ] `TranscriptionResult` に翻訳フィールドが追加されている（末尾にオプショナル追加）
 - [ ] `StreamTranscriber` に translator パラメータが追加されている
 - [ ] 文脈バッファ管理が実装されている
 - [ ] ASR + 翻訳の統合テストがパスする
 - [ ] リアルタイム翻訳のサンプルスクリプトが作成されている
+- [ ] （オプション）トップレベル `livecap_core` へ翻訳 API エクスポート
 
 ## 参考資料
 
