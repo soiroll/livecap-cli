@@ -10,11 +10,13 @@ import asyncio
 import concurrent.futures
 import logging
 import queue
+from collections import deque
 from typing import (
     TYPE_CHECKING,
     AsyncIterator,
     Callable,
     Iterator,
+    List,
     Optional,
     Protocol,
     Tuple,
@@ -28,8 +30,12 @@ from .result import InterimResult, TranscriptionResult
 
 if TYPE_CHECKING:
     from ..audio_sources import AudioSource
+    from ..translation.base import BaseTranslator
 
 logger = logging.getLogger(__name__)
+
+# 翻訳用の文脈バッファの最大サイズ
+MAX_CONTEXT_BUFFER = 100
 
 
 class TranscriptionError(Exception):
@@ -81,21 +87,38 @@ class StreamTranscriber:
 
     VADプロセッサとASRエンジンを組み合わせて
     リアルタイム文字起こしを行う。
+    オプションで翻訳エンジンを統合し、ASR + 翻訳のパイプラインを提供。
 
     Args:
         engine: 文字起こしエンジン（BaseEngine互換）
+        translator: 翻訳エンジン（BaseTranslator）。指定時は source_lang/target_lang 必須
+        source_lang: 翻訳元言語コード（translator 指定時は必須）
+        target_lang: 翻訳先言語コード（translator 指定時は必須）
         vad_config: VAD設定（vad_processor未指定時に使用）
         vad_processor: VADプロセッサ（テスト用に注入可能）
         source_id: 音声ソース識別子
         max_workers: 文字起こし用スレッド数（デフォルト: 1）
 
     Usage:
-        # 基本的な使い方
+        # 基本的な使い方（翻訳なし）
         transcriber = StreamTranscriber(engine=engine)
 
         with MicrophoneSource() as mic:
             for result in transcriber.transcribe_sync(mic):
                 print(f"[{result.start_time:.2f}s] {result.text}")
+
+        # 翻訳付き
+        translator = TranslatorFactory.create_translator("google")
+        transcriber = StreamTranscriber(
+            engine=engine,
+            translator=translator,
+            source_lang="ja",
+            target_lang="en",
+        )
+        for result in transcriber.transcribe_sync(mic):
+            print(f"[JA] {result.text}")
+            if result.translated_text:
+                print(f"[EN] {result.translated_text}")
 
         # 非同期使用
         async with MicrophoneSource() as mic:
@@ -114,6 +137,9 @@ class StreamTranscriber:
     def __init__(
         self,
         engine: TranscriptionEngine,
+        translator: Optional["BaseTranslator"] = None,
+        source_lang: Optional[str] = None,
+        target_lang: Optional[str] = None,
         vad_config: Optional[VADConfig] = None,
         vad_processor: Optional[VADProcessor] = None,
         source_id: str = "default",
@@ -122,6 +148,32 @@ class StreamTranscriber:
         self.engine = engine
         self.source_id = source_id
         self._sample_rate = engine.get_required_sample_rate()
+
+        # 翻訳設定
+        self._translator = translator
+        self._source_lang = source_lang
+        self._target_lang = target_lang
+        self._context_buffer: deque[str] = deque(maxlen=MAX_CONTEXT_BUFFER)
+
+        # translator 設定時のバリデーション
+        if translator is not None:
+            if not translator.is_initialized():
+                raise ValueError(
+                    "Translator not initialized. Call load_model() first."
+                )
+            if source_lang is None or target_lang is None:
+                raise ValueError(
+                    "source_lang and target_lang are required when translator is set."
+                )
+            # 言語ペアの事前警告
+            pairs = translator.get_supported_pairs()
+            if pairs and (source_lang, target_lang) not in pairs:
+                logger.warning(
+                    "Language pair (%s -> %s) may not be supported by %s",
+                    source_lang,
+                    target_lang,
+                    translator.get_translator_name(),
+                )
 
         # VADプロセッサ（注入または新規作成）
         if vad_processor is not None:
@@ -249,6 +301,8 @@ class StreamTranscriber:
     def reset(self) -> None:
         """状態をリセット"""
         self._vad.reset()
+        # 翻訳用文脈バッファをクリア
+        self._context_buffer.clear()
         # キューをクリア
         while not self._result_queue.empty():
             try:
@@ -279,13 +333,20 @@ class StreamTranscriber:
             if not text or not text.strip():
                 return None
 
+            text = text.strip()
+
+            # 翻訳処理（translator が設定されている場合）
+            translated_text, target_language = self._translate_text(text)
+
             return TranscriptionResult(
-                text=text.strip(),
+                text=text,
                 start_time=segment.start_time,
                 end_time=segment.end_time,
                 is_final=True,
                 confidence=confidence,
                 source_id=self.source_id,
+                translated_text=translated_text,
+                target_language=target_language,
             )
         except Exception as e:
             logger.error(f"Transcription error: {e}", exc_info=True)
@@ -320,17 +381,68 @@ class StreamTranscriber:
             if not text or not text.strip():
                 return None
 
+            text = text.strip()
+
+            # 翻訳処理（translator が設定されている場合）
+            # 翻訳も executor で実行（ブロッキング回避）
+            if self._translator:
+                translated_text, target_language = await loop.run_in_executor(
+                    self._executor,
+                    self._translate_text,
+                    text,
+                )
+            else:
+                translated_text, target_language = None, None
+
             return TranscriptionResult(
-                text=text.strip(),
+                text=text,
                 start_time=segment.start_time,
                 end_time=segment.end_time,
                 is_final=True,
                 confidence=confidence,
                 source_id=self.source_id,
+                translated_text=translated_text,
+                target_language=target_language,
             )
         except Exception as e:
             logger.error(f"Async transcription error: {e}", exc_info=True)
             raise EngineError(f"Transcription failed: {e}") from e
+
+    def _translate_text(self, text: str) -> Tuple[Optional[str], Optional[str]]:
+        """
+        テキストを翻訳
+
+        Args:
+            text: 翻訳対象テキスト
+
+        Returns:
+            (translated_text, target_language) のタプル
+            translator が設定されていないか、翻訳に失敗した場合は (None, None)
+        """
+        if not self._translator or not text:
+            return None, None
+
+        try:
+            # 公開プロパティから context_sentences を取得
+            context_len = self._translator.default_context_sentences
+            context: List[str] = list(self._context_buffer)[-context_len:]
+
+            trans_result = self._translator.translate(
+                text,
+                self._source_lang,  # type: ignore[arg-type]
+                self._target_lang,  # type: ignore[arg-type]
+                context=context,
+            )
+
+            # 文脈バッファに追加
+            self._context_buffer.append(text)
+
+            return trans_result.text, self._target_lang
+        except Exception as e:
+            logger.warning(f"Translation failed: {e}")
+            # 翻訳失敗しても文脈バッファには追加（次の翻訳の文脈として使用）
+            self._context_buffer.append(text)
+            return None, None
 
     def _transcribe_interim(self, segment: VADSegment) -> Optional[InterimResult]:
         """中間結果の文字起こし
