@@ -37,6 +37,9 @@ logger = logging.getLogger(__name__)
 # 翻訳用の文脈バッファの最大サイズ
 MAX_CONTEXT_BUFFER = 100
 
+# 翻訳タイムアウト（秒）: Riva-4B など重いモデルでの ASR ブロック防止
+TRANSLATION_TIMEOUT = 5.0
+
 
 class TranscriptionError(Exception):
     """文字起こしエラーの基底クラス"""
@@ -384,15 +387,29 @@ class StreamTranscriber:
             text = text.strip()
 
             # 翻訳処理（translator が設定されている場合）
-            # 翻訳も executor で実行（ブロッキング回避）
+            # 翻訳も executor で実行（ブロッキング回避）、タイムアウト付き
+            translated_text: Optional[str] = None
+            target_language: Optional[str] = None
+
             if self._translator:
-                translated_text, target_language = await loop.run_in_executor(
-                    self._executor,
-                    self._translate_text,
-                    text,
-                )
-            else:
-                translated_text, target_language = None, None
+                try:
+                    translated_text, target_language = await asyncio.wait_for(
+                        loop.run_in_executor(
+                            self._executor,
+                            self._translate_text,
+                            text,
+                        ),
+                        timeout=TRANSLATION_TIMEOUT,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        f"Async translation timed out after {TRANSLATION_TIMEOUT}s"
+                    )
+                    # タイムアウトしても文脈バッファには追加
+                    self._context_buffer.append(text)
+                except Exception as e:
+                    logger.warning(f"Async translation failed: {e}")
+                    self._context_buffer.append(text)
 
             return TranscriptionResult(
                 text=text,
@@ -410,34 +427,55 @@ class StreamTranscriber:
 
     def _translate_text(self, text: str) -> Tuple[Optional[str], Optional[str]]:
         """
-        テキストを翻訳
+        テキストを翻訳（タイムアウト付き）
 
         Args:
             text: 翻訳対象テキスト
 
         Returns:
             (translated_text, target_language) のタプル
-            translator が設定されていないか、翻訳に失敗した場合は (None, None)
+            translator が設定されていないか、翻訳に失敗/タイムアウトした場合は (None, None)
+
+        Note:
+            TRANSLATION_TIMEOUT（デフォルト5秒）を超過した場合、
+            翻訳をスキップして (None, None) を返し、ASR パイプラインを継続。
+            これは Riva-4B など重いモデルでのブロック防止策。
         """
         if not self._translator or not text:
             return None, None
 
-        try:
-            # 公開プロパティから context_sentences を取得
-            context_len = self._translator.default_context_sentences
-            context: List[str] = list(self._context_buffer)[-context_len:]
+        # 公開プロパティから context_sentences を取得
+        context_len = self._translator.default_context_sentences
+        context: List[str] = list(self._context_buffer)[-context_len:]
 
-            trans_result = self._translator.translate(
+        def do_translate() -> str:
+            """翻訳実行（executor 内で呼ばれる）"""
+            trans_result = self._translator.translate(  # type: ignore[union-attr]
                 text,
                 self._source_lang,  # type: ignore[arg-type]
                 self._target_lang,  # type: ignore[arg-type]
                 context=context,
             )
+            return trans_result.text
+
+        try:
+            # タイムアウト付きで翻訳を実行
+            future = self._executor.submit(do_translate)
+            translated = future.result(timeout=TRANSLATION_TIMEOUT)
 
             # 文脈バッファに追加
             self._context_buffer.append(text)
 
-            return trans_result.text, self._target_lang
+            return translated, self._target_lang
+
+        except concurrent.futures.TimeoutError:
+            logger.warning(
+                f"Translation timed out after {TRANSLATION_TIMEOUT}s, skipping translation"
+            )
+            # タイムアウトしても文脈バッファには追加
+            self._context_buffer.append(text)
+            return None, None
+
         except Exception as e:
             logger.warning(f"Translation failed: {e}")
             # 翻訳失敗しても文脈バッファには追加（次の翻訳の文脈として使用）

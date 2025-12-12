@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from collections import deque
 from typing import List, Optional, Tuple
 from unittest.mock import MagicMock, patch
@@ -11,6 +12,7 @@ import pytest
 
 from livecap_core.transcription.stream import (
     MAX_CONTEXT_BUFFER,
+    TRANSLATION_TIMEOUT,
     StreamTranscriber,
     TranscriptionEngine,
 )
@@ -333,6 +335,79 @@ class TestStreamTranscriberTranslation:
 
         # 翻訳失敗しても文脈バッファには追加される
         assert "こんにちは" in transcriber._context_buffer
+
+
+class TestStreamTranscriberTimeout:
+    """StreamTranscriber 翻訳タイムアウトのテスト"""
+
+    @patch("livecap_core.transcription.stream.TRANSLATION_TIMEOUT", 0.1)
+    def test_translation_timeout_returns_none(self, caplog):
+        """翻訳がタイムアウトした場合は None を返す"""
+        engine = MockEngine()
+        translator = MockTranslator()
+        vad = MockVADProcessor()
+
+        # translate をスリープさせてタイムアウトを発生させる
+        def slow_translate(*args, **kwargs):
+            time.sleep(0.5)  # 0.1秒より長くスリープ
+            return TranslationResult(
+                text="Should not reach here",
+                original_text=args[0],
+                source_lang=args[1],
+                target_lang=args[2],
+            )
+
+        translator.translate = slow_translate  # type: ignore
+
+        transcriber = StreamTranscriber(
+            engine=engine,
+            translator=translator,
+            source_lang="ja",
+            target_lang="en",
+            vad_processor=vad,
+        )
+
+        with caplog.at_level("WARNING"):
+            translated, target_lang = transcriber._translate_text("こんにちは")
+
+        assert translated is None
+        assert target_lang is None
+        assert "timed out" in caplog.text
+
+    @patch("livecap_core.transcription.stream.TRANSLATION_TIMEOUT", 0.1)
+    def test_translation_timeout_still_adds_to_context(self):
+        """翻訳がタイムアウトしても文脈バッファには追加"""
+        engine = MockEngine()
+        translator = MockTranslator()
+        vad = MockVADProcessor()
+
+        def slow_translate(*args, **kwargs):
+            time.sleep(0.5)  # 0.1秒より長くスリープ
+            return TranslationResult(
+                text="Should not reach here",
+                original_text=args[0],
+                source_lang=args[1],
+                target_lang=args[2],
+            )
+
+        translator.translate = slow_translate  # type: ignore
+
+        transcriber = StreamTranscriber(
+            engine=engine,
+            translator=translator,
+            source_lang="ja",
+            target_lang="en",
+            vad_processor=vad,
+        )
+
+        transcriber._translate_text("こんにちは")
+
+        # タイムアウトしても文脈バッファには追加される
+        assert "こんにちは" in transcriber._context_buffer
+
+    def test_translation_timeout_constant_is_5_seconds(self):
+        """タイムアウト定数が5秒であることを確認"""
+        assert TRANSLATION_TIMEOUT == 5.0
 
 
 class TestStreamTranscriberReset:
