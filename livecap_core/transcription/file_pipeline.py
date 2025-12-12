@@ -1,16 +1,21 @@
-"""Core file transcription pipeline (Phase 0.7)."""
+"""Core file transcription pipeline (Phase 0.7 + Phase 6a translation)."""
 from __future__ import annotations
 
+import concurrent.futures
 import logging
 import os
 import shutil
 import tempfile
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
-from typing import Any, Callable, Iterable, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from livecap_core.translation.base import BaseTranslator
 
 try:  # pragma: no cover - optional dependency
     import soundfile as sf
@@ -30,6 +35,9 @@ from livecap_core.resources import FFmpegManager, FFmpegNotFoundError, get_ffmpe
 
 logger = logging.getLogger(__name__)
 
+# Phase 6a: Translation constants (shared with StreamTranscriber)
+MAX_CONTEXT_BUFFER = 100  # Maximum sentences to keep for context
+
 
 # === Data models & callback types ================================================================
 
@@ -43,6 +51,9 @@ class FileSubtitleSegment:
     end: float
     text: str
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Phase 6a: Translation fields (optional, backward compatible)
+    translated_text: Optional[str] = None
+    target_language: Optional[str] = None
 
 
 @dataclass(slots=True)
@@ -129,11 +140,17 @@ class FileTranscriptionPipeline:
         file_paths: Sequence[str | Path],
         *,
         segment_transcriber: SegmentTranscriber,
+        # Phase 6a: Translation parameters
+        translator: Optional[BaseTranslator] = None,
+        source_lang: Optional[str] = None,
+        target_lang: Optional[str] = None,
+        translation_timeout: Optional[float] = None,
         progress_callback: Optional[ProgressCallback] = None,
         status_callback: Optional[StatusCallback] = None,
         result_callback: Optional[FileResultCallback] = None,
         error_callback: Optional[ErrorCallback] = None,
         write_subtitles: bool = True,
+        write_translated_subtitles: bool = False,
         should_cancel: Optional[Callable[[], bool]] = None,
     ) -> list[FileProcessingResult]:
         """
@@ -143,11 +160,16 @@ class FileTranscriptionPipeline:
             file_paths: files to process.
             segment_transcriber: callable invoked for each speech segment; expected to
                 return recognised text (empty string permitted).
+            translator: Optional translator for real-time translation.
+            source_lang: Source language code (required if translator is set).
+            target_lang: Target language code (required if translator is set).
+            translation_timeout: Optional timeout for translation (seconds).
             progress_callback: optional progress sink.
             status_callback: textual status updates (caller can translate/relay).
             result_callback: called after each file is processed.
             error_callback: invoked when pipeline level errors occur.
             write_subtitles: when True, write `.srt` alongside source file.
+            write_translated_subtitles: when True, write translated `.srt` file.
 
         Returns:
             List of FileProcessingResult in the same order as `file_paths`.
@@ -174,7 +196,12 @@ class FileTranscriptionPipeline:
                 result = self.process_file(
                     file_path,
                     segment_transcriber=segment_transcriber,
+                    translator=translator,
+                    source_lang=source_lang,
+                    target_lang=target_lang,
+                    translation_timeout=translation_timeout,
                     write_subtitles=write_subtitles,
+                    write_translated_subtitles=write_translated_subtitles,
                     progress_callback=progress_callback,
                     should_cancel=should_cancel,
                 )
@@ -216,16 +243,37 @@ class FileTranscriptionPipeline:
         file_path: str | Path,
         *,
         segment_transcriber: SegmentTranscriber,
+        # Phase 6a: Translation parameters
+        translator: Optional[BaseTranslator] = None,
+        source_lang: Optional[str] = None,
+        target_lang: Optional[str] = None,
+        translation_timeout: Optional[float] = None,
         write_subtitles: bool = True,
+        write_translated_subtitles: bool = False,
         progress_callback: Optional[ProgressCallback] = None,
         should_cancel: Optional[Callable[[], bool]] = None,
     ) -> FileProcessingResult:
         """
         Process a single file and optionally write subtitles.
 
+        Args:
+            file_path: Path to the audio/video file.
+            segment_transcriber: Callable for ASR transcription.
+            translator: Optional translator for real-time translation.
+            source_lang: Source language code (required if translator is set).
+            target_lang: Target language code (required if translator is set).
+            translation_timeout: Optional timeout for translation (seconds).
+            write_subtitles: Write original language SRT file.
+            write_translated_subtitles: Write translated SRT file.
+            progress_callback: Progress update callback.
+            should_cancel: Cancellation check callback.
+
         Returns:
             FileProcessingResult detailing success flag, subtitles, and output path.
         """
+        # Validate translator parameters
+        self._validate_translator_params(translator, source_lang, target_lang)
+
         source = Path(file_path)
         self._check_cancel(should_cancel)
         working_audio = self._extract_audio(source)
@@ -238,18 +286,32 @@ class FileTranscriptionPipeline:
                 audio_data,
                 sample_rate,
                 segment_transcriber,
+                translator=translator,
+                source_lang=source_lang,
+                target_lang=target_lang,
+                translation_timeout=translation_timeout,
                 progress_callback=progress_callback,
                 should_cancel=should_cancel,
             )
             output_path = None
+            translated_output_path = None
             if write_subtitles:
                 output_path = self._write_srt(source, subtitles)
+            if write_translated_subtitles and translator:
+                translated_output_path = self._write_translated_srt(
+                    source, subtitles, target_lang
+                )
 
             metadata = {
                 "segment_count": len(subtitles),
                 "duration_seconds": float(len(audio_data) / sample_rate),
                 "sample_rate": sample_rate,
             }
+            if translator:
+                metadata["translation_enabled"] = True
+                metadata["target_language"] = target_lang
+            if translated_output_path:
+                metadata["translated_srt_path"] = str(translated_output_path)
 
             return FileProcessingResult(
                 source_path=source,
@@ -400,12 +462,19 @@ class FileTranscriptionPipeline:
         sample_rate: int,
         transcriber: SegmentTranscriber,
         *,
+        translator: Optional[BaseTranslator] = None,
+        source_lang: Optional[str] = None,
+        target_lang: Optional[str] = None,
+        translation_timeout: Optional[float] = None,
         progress_callback: Optional[ProgressCallback] = None,
         should_cancel: Optional[Callable[[], bool]] = None,
     ) -> list[FileSubtitleSegment]:
         segment_list = list(segments)
         subtitles: list[FileSubtitleSegment] = []
         total_segments = len(segment_list) if segment_list else 0
+
+        # Phase 6a: Context buffer for translation (file-scoped)
+        context_buffer: deque[str] = deque(maxlen=MAX_CONTEXT_BUFFER)
 
         for index, (start, end) in enumerate(segment_list, start=1):
             self._check_cancel(should_cancel)
@@ -423,6 +492,22 @@ class FileTranscriptionPipeline:
                 text = ""
             if not text:
                 continue
+
+            # Phase 6a: Translation processing
+            translated_text = None
+            result_target_lang = None
+            if translator and source_lang and target_lang:
+                translated_text, result_target_lang = self._translate_text(
+                    text=text,
+                    translator=translator,
+                    source_lang=source_lang,
+                    target_lang=target_lang,
+                    context_buffer=context_buffer,
+                    timeout=translation_timeout,
+                )
+                # Add to context buffer regardless of translation success
+                context_buffer.append(text)
+
             subtitles.append(
                 FileSubtitleSegment(
                     index=index,
@@ -430,6 +515,8 @@ class FileTranscriptionPipeline:
                     end=end,
                     text=text,
                     metadata={"duration": end - start},
+                    translated_text=translated_text,
+                    target_language=result_target_lang,
                 )
             )
             if progress_callback:
@@ -475,6 +562,140 @@ class FileTranscriptionPipeline:
     def _check_cancel(should_cancel: Optional[Callable[[], bool]]) -> None:
         if should_cancel and should_cancel():
             raise FileTranscriptionCancelled()
+
+    # ---------------------------------------------------------------- Phase 6a: Translation --------
+    @staticmethod
+    def _validate_translator_params(
+        translator: Optional[BaseTranslator],
+        source_lang: Optional[str],
+        target_lang: Optional[str],
+    ) -> None:
+        """Validate translator parameters."""
+        if translator is None:
+            return
+
+        # Check if translator is initialized
+        if not translator.is_initialized():
+            raise ValueError(
+                "Translator is not initialized. Call load_model() first."
+            )
+
+        # Require non-empty language parameters when translator is set
+        if not source_lang or not target_lang:
+            raise ValueError(
+                "source_lang and target_lang are required when translator is set."
+            )
+        # Also check for whitespace-only strings
+        if not source_lang.strip() or not target_lang.strip():
+            raise ValueError(
+                "source_lang and target_lang cannot be empty or whitespace-only."
+            )
+
+        # Warn if language pair may not be supported
+        supported_pairs = translator.get_supported_pairs()
+        if supported_pairs and (source_lang, target_lang) not in supported_pairs:
+            logger.warning(
+                "Language pair (%s -> %s) may not be supported by %s",
+                source_lang,
+                target_lang,
+                translator.get_translator_name(),
+            )
+
+    def _translate_text(
+        self,
+        text: str,
+        translator: BaseTranslator,
+        source_lang: str,
+        target_lang: str,
+        context_buffer: deque[str],
+        timeout: Optional[float] = None,
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """
+        Translate text with optional timeout.
+
+        Args:
+            text: Text to translate.
+            translator: Translator instance.
+            source_lang: Source language code.
+            target_lang: Target language code.
+            context_buffer: Context buffer for translation.
+            timeout: Optional timeout in seconds.
+
+        Returns:
+            Tuple of (translated_text, target_language) or (None, None) on failure.
+        """
+        try:
+            # Get context from buffer
+            context_len = translator.default_context_sentences
+            context = list(context_buffer)[-context_len:] if context_buffer else None
+
+            # Treat timeout <= 0 as no timeout (invalid value)
+            effective_timeout = timeout if timeout is not None and timeout > 0 else None
+
+            if effective_timeout is not None:
+                # Use ThreadPoolExecutor for timeout support
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(
+                        translator.translate,
+                        text,
+                        source_lang,
+                        target_lang,
+                        context,
+                    )
+                    try:
+                        result = future.result(timeout=effective_timeout)
+                        return result.text, target_lang
+                    except concurrent.futures.TimeoutError:
+                        logger.warning(
+                            "Translation timed out after %.1fs for text: %s...",
+                            effective_timeout,
+                            text[:50],
+                        )
+                        return None, None
+            else:
+                # No timeout - direct call
+                result = translator.translate(text, source_lang, target_lang, context)
+                return result.text, target_lang
+
+        except Exception as exc:
+            logger.warning("Translation failed: %s", exc)
+            return None, None
+
+    def _write_translated_srt(
+        self,
+        source: Path,
+        subtitles: list[FileSubtitleSegment],
+        target_lang: Optional[str],
+    ) -> Optional[Path]:
+        """Write translated SRT file."""
+        # Filter segments with translations
+        translated_segments = [s for s in subtitles if s.translated_text]
+        if not translated_segments:
+            logger.warning("No translated segments to write")
+            return None
+
+        # Create output path with language suffix
+        suffix = f"_{target_lang}" if target_lang else "_translated"
+        output_path = source.with_stem(f"{source.stem}{suffix}").with_suffix(".srt")
+
+        content = self._build_translated_srt(translated_segments)
+        with open(output_path, "w", encoding="utf-8") as handle:
+            handle.write(content)
+        return output_path
+
+    def _build_translated_srt(self, subtitles: list[FileSubtitleSegment]) -> str:
+        """Build SRT content from translated segments."""
+        lines: list[str] = []
+        for segment in subtitles:
+            if segment.translated_text:
+                lines.append(str(segment.index))
+                lines.append(
+                    f"{self._format_timestamp(segment.start)} --> "
+                    f"{self._format_timestamp(segment.end)}"
+                )
+                lines.append(segment.translated_text)
+                lines.append("")
+        return "\n".join(lines)
 
 
 __all__ = [

@@ -31,6 +31,13 @@ uv sync --extra engines-torch
 | [callback_api.py](realtime/callback_api.py) | コールバック方式での文字起こし | 初級 |
 | [async_microphone.py](realtime/async_microphone.py) | マイク入力からの非同期文字起こし | 中級 |
 | [custom_vad_config.py](realtime/custom_vad_config.py) | カスタム VAD 設定の使用例 | 上級 |
+| [realtime_translation.py](realtime/realtime_translation.py) | リアルタイム文字起こし + 翻訳 (Phase 5) | 中級 |
+
+### バッチ処理 (`examples/batch/`)
+
+| ファイル | 説明 | 難易度 |
+|---------|------|--------|
+| [batch_translation.py](batch/batch_translation.py) | ファイル単位の文字起こし + 翻訳 (Phase 6a) | 中級 |
 
 ## 実行方法
 
