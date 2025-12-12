@@ -336,10 +336,10 @@ Phase 5 で実装した StreamTranscriber の翻訳統合パターンを FileTra
 
 | 項目 | 決定 | 理由 |
 |------|------|------|
-| 統合方式 | translator パラメータ追加 | StreamTranscriber と一貫性、継承より合成 |
-| FileSubtitleSegment | `translated_text` + `target_language` 追加 | metadata ではなく専用フィールドで型安全性確保 |
+| 統合方式 | `process_file(s)` に translator パラメータ追加 | 現行 API 維持（`__init__` は `ffmpeg_manager/segmenter` のみ）|
+| FileSubtitleSegment | `translated_text` + `target_language` を末尾 Optional 追加 | 既存フィールド (`index/start/end/text/metadata`) との互換性 |
 | 文脈管理 | ファイル内バッファ、ファイル間リセット | バッチ処理に最適化 |
-| タイムアウト | **不要** | バッチ処理のためリアルタイム性不要 |
+| タイムアウト | デフォルト無効の `translation_timeout` オプション | ネットワークハング対策、Phase 5 の `TRANSLATION_TIMEOUT` 再利用可 |
 | SRT 出力 | 翻訳版を別ファイル出力オプション | 柔軟性確保 |
 | 非同期翻訳 | **Phase 7 へ延期** | 必要性が確認されてから実装 |
 
@@ -347,46 +347,96 @@ Phase 5 で実装した StreamTranscriber の翻訳統合パターンを FileTra
 
 #### FileSubtitleSegment の拡張
 
+現行の `FileSubtitleSegment` は以下の構造（`slots=True`）:
+
 ```python
-@dataclass
+@dataclass(slots=True)
 class FileSubtitleSegment:
+    index: int
+    start: float      # ※ start_time ではない
+    end: float        # ※ end_time ではない
     text: str
-    start_time: float
-    end_time: float
-    confidence: float = 1.0
-    language: str = ""
-    # Phase 6a 追加
+    metadata: dict[str, Any] = field(default_factory=dict)
+```
+
+Phase 6a で末尾に Optional フィールドを追加:
+
+```python
+@dataclass(slots=True)
+class FileSubtitleSegment:
+    index: int
+    start: float
+    end: float
+    text: str
+    metadata: dict[str, Any] = field(default_factory=dict)
+    # Phase 6a 追加（末尾 Optional で後方互換）
     translated_text: Optional[str] = None
     target_language: Optional[str] = None
 ```
 
+**後方互換性の注意**:
+- `FileSubtitleSegment` はトップレベル export 済み（`livecap_core.FileSubtitleSegment`）
+- 末尾 Optional 追加は安全だが、位置引数で全フィールドを渡している既存コードがあれば更新推奨
+- `slots=True` のため、新フィールドは `__slots__` に自動追加される
+
 #### FileTranscriptionPipeline の拡張
+
+現行 API では `__init__` は `ffmpeg_manager/segmenter` のみを受け、ASR の `segment_transcriber` は `process_file(s)` に渡す設計。この設計を維持し、translator 系パラメータも `process_file(s)` に追加する。
 
 ```python
 class FileTranscriptionPipeline:
     def __init__(
         self,
-        segment_transcriber: SegmentTranscriberCallable,
-        translator: Optional[BaseTranslator] = None,  # Phase 6a 追加
-        source_lang: Optional[str] = None,            # Phase 6a 追加
-        target_lang: Optional[str] = None,            # Phase 6a 追加
-        output_srt_path: Optional[str] = None,
-        translated_srt_path: Optional[str] = None,    # Phase 6a 追加
+        *,
+        ffmpeg_manager: Optional[FFmpegManager] = None,
+        segmenter: Optional[Segmenter] = None,
+    ) -> None:
+        # 既存の初期化（変更なし）
         ...
-    ):
-        self._translator = translator
-        self._source_lang = source_lang
-        self._target_lang = target_lang
-        self._translated_srt_path = translated_srt_path
-        self._context_buffer: deque[str] = deque(maxlen=MAX_CONTEXT_BUFFER)
 
-        # バリデーション（StreamTranscriber と同じパターン）
+    def process_file(
+        self,
+        file_path: str | Path,
+        *,
+        segment_transcriber: SegmentTranscriber,
+        # Phase 6a 追加
+        translator: Optional[BaseTranslator] = None,
+        source_lang: Optional[str] = None,
+        target_lang: Optional[str] = None,
+        translation_timeout: Optional[float] = None,  # デフォルト無効
+        write_subtitles: bool = True,
+        write_translated_subtitles: bool = False,     # 翻訳版 SRT
+        ...
+    ) -> FileProcessingResult:
+        # バリデーション
         if translator:
             if not translator.is_initialized():
                 raise ValueError("Translator not initialized")
             if source_lang is None or target_lang is None:
                 raise ValueError("source_lang and target_lang required")
+        ...
+
+    def process_files(
+        self,
+        file_paths: Sequence[str | Path],
+        *,
+        segment_transcriber: SegmentTranscriber,
+        # Phase 6a 追加（process_file と同じパラメータ）
+        translator: Optional[BaseTranslator] = None,
+        source_lang: Optional[str] = None,
+        target_lang: Optional[str] = None,
+        translation_timeout: Optional[float] = None,
+        write_subtitles: bool = True,
+        write_translated_subtitles: bool = False,
+        ...
+    ) -> list[FileProcessingResult]:
+        ...
 ```
+
+**タイムアウトオプション**:
+- `translation_timeout: Optional[float] = None` でデフォルト無効
+- 指定時は Phase 5 の `TRANSLATION_TIMEOUT` 相当の処理を適用
+- ネットワークハングや重いモデル（Riva-4B）対策として有用
 
 #### 文脈管理の違い
 
@@ -397,32 +447,43 @@ class FileTranscriptionPipeline:
 | 最大サイズ | `MAX_CONTEXT_BUFFER=100` | 同じ定数を共有 |
 
 ```python
-def process(self, audio_path: str) -> Iterator[FileSubtitleSegment]:
-    # ファイル処理開始時に文脈をリセット
-    self._context_buffer.clear()
+def process_file(self, file_path, *, segment_transcriber, translator=None, ...):
+    # 翻訳が有効な場合、ファイル処理開始時に文脈をリセット
+    context_buffer: deque[str] = deque(maxlen=MAX_CONTEXT_BUFFER)
 
-    for segment in self._process_segments(audio_path):
+    for segment in self._transcribe_segments(...):
+        # 翻訳処理（translator が設定されている場合）
+        if translator and segment.text.strip():
+            # 文脈を使って翻訳
+            ...
+            context_buffer.append(segment.text)
         yield segment
+
+    # ファイル処理完了時に文脈バッファは自動的にスコープアウト
 ```
 
 #### SRT 出力オプション
 
 ```python
 # 元言語と翻訳を両方出力
-pipeline = FileTranscriptionPipeline(
+pipeline = FileTranscriptionPipeline()
+
+result = pipeline.process_file(
+    "audio.wav",
     segment_transcriber=engine.transcribe,
     translator=translator,
     source_lang="ja",
     target_lang="en",
-    output_srt_path="output_ja.srt",           # 元言語の字幕
-    translated_srt_path="output_en.srt",       # 翻訳版の字幕
+    write_subtitles=True,              # 元言語の字幕（audio.srt）
+    write_translated_subtitles=True,   # 翻訳版の字幕（audio_en.srt）
 )
 ```
 
 #### 使用例
 
 ```python
-from livecap_core import FileTranscriptionPipeline, EngineFactory
+from livecap_core import FileTranscriptionPipeline
+from livecap_core.engines import EngineFactory
 from livecap_core.translation import TranslatorFactory
 
 # エンジン初期化
@@ -433,14 +494,17 @@ engine.load_model()
 translator = TranslatorFactory.create_translator("google")
 
 # パイプライン実行
-pipeline = FileTranscriptionPipeline(
+pipeline = FileTranscriptionPipeline()
+
+result = pipeline.process_file(
+    "audio.wav",
     segment_transcriber=engine.transcribe,
     translator=translator,
     source_lang="ja",
     target_lang="en",
 )
 
-for segment in pipeline.process("audio.wav"):
+for segment in result.subtitles:
     print(f"[JA] {segment.text}")
     if segment.translated_text:
         print(f"[EN] {segment.translated_text}")
@@ -448,26 +512,30 @@ for segment in pipeline.process("audio.wav"):
 
 #### 実装タスク (Phase 6a)
 
-1. `FileSubtitleSegment` に `translated_text`, `target_language` フィールド追加
-2. `FileTranscriptionPipeline.__init__` に translator 関連パラメータ追加
-3. 初期化時のバリデーション実装
-4. 文脈バッファ管理の実装（ファイル間リセット）
-5. `_process_segment` での翻訳処理追加
-6. 翻訳エラー時の警告ログ実装（タイムアウト不要）
-7. `translated_srt_path` オプションの実装
-8. ユニットテスト作成
-9. 統合テスト作成
-10. サンプルスクリプト作成
+1. `FileSubtitleSegment` に `translated_text`, `target_language` フィールド追加（末尾 Optional）
+2. `process_file` / `process_files` に translator 関連パラメータ追加
+3. パラメータバリデーション実装（translator 設定時の言語必須チェック等）
+4. 文脈バッファ管理の実装（ファイル内スコープ、ファイル間リセット）
+5. `_transcribe_segments` での翻訳処理追加
+6. 翻訳エラー時の警告ログ実装
+7. `translation_timeout` オプションの実装（デフォルト無効）
+8. `write_translated_subtitles` オプションの実装
+9. ユニットテスト作成（`tests/core/transcription/` に配置）
+10. 統合テスト更新（`tests/integration/transcription/` に配置）
+11. サンプルスクリプト作成
 
 #### 変更ファイル (Phase 6a)
 
 | ファイル | 操作 | 説明 |
 |---------|------|------|
-| `livecap_core/transcription/file_pipeline.py` | 更新 | translator 統合 |
-| `livecap_core/transcription/subtitle_segment.py` | 更新 | 翻訳フィールド追加 |
-| `tests/core/transcription/test_file_pipeline.py` | 更新 | 翻訳統合テスト |
-| `tests/integration/test_file_translation.py` | 新規 | ファイル翻訳統合テスト |
+| `livecap_core/transcription/file_pipeline.py` | 更新 | `FileSubtitleSegment` 翻訳フィールド追加、`process_file(s)` translator 統合 |
+| `tests/core/transcription/test_file_pipeline_translation.py` | 新規 | 翻訳統合ユニットテスト |
+| `tests/integration/transcription/test_file_transcription_pipeline.py` | 更新 | 翻訳統合テスト追加 |
 | `examples/batch/batch_translation.py` | 新規 | バッチ翻訳サンプル |
+
+**テスト配置方針**:
+- ユニットテスト: `tests/core/transcription/` に配置（モック使用、外部依存なし）
+- 統合テスト: `tests/integration/transcription/` に配置（実際の ASR/翻訳エンジン使用）
 
 ### Phase 6b: トップレベルエクスポート（オプション）
 
@@ -501,11 +569,16 @@ from livecap_core import TranslatorFactory, TranslationResult, BaseTranslator
 2. `__all__` リスト更新
 3. ドキュメント更新
 
+**動的 import の注意**:
+- トップレベル `livecap_core/__init__.py` で重い依存（torch, transformers 等）を即座に引かないよう、遅延 import を維持する
+- `TranslatorFactory` 等は `livecap_core.translation` サブモジュールからの re-export とし、実際のインポートはサブモジュール参照時に発生させる
+- 例: `from livecap_core.translation import TranslatorFactory` をトップレベルで `TranslatorFactory = ...` として公開
+
 #### 変更ファイル (Phase 6b)
 
 | ファイル | 操作 | 説明 |
 |---------|------|------|
-| `livecap_core/__init__.py` | 更新 | 翻訳 API エクスポート |
+| `livecap_core/__init__.py` | 更新 | 翻訳 API エクスポート（遅延 import 維持） |
 
 ## Phase 7: 非同期翻訳（将来計画）
 
