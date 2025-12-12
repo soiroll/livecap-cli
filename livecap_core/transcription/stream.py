@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import logging
+import os
 import queue
 from collections import deque
 from typing import (
@@ -38,7 +39,11 @@ logger = logging.getLogger(__name__)
 MAX_CONTEXT_BUFFER = 100
 
 # 翻訳タイムアウト（秒）: Riva-4B など重いモデルでの ASR ブロック防止
-TRANSLATION_TIMEOUT = 5.0
+# 環境変数 LIVECAP_TRANSLATION_TIMEOUT で上書き可能
+_DEFAULT_TRANSLATION_TIMEOUT = 10.0
+TRANSLATION_TIMEOUT = float(
+    os.environ.get("LIVECAP_TRANSLATION_TIMEOUT", _DEFAULT_TRANSLATION_TIMEOUT)
+)
 
 
 class TranscriptionError(Exception):

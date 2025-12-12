@@ -13,6 +13,7 @@ import pytest
 from livecap_core.transcription.stream import (
     MAX_CONTEXT_BUFFER,
     TRANSLATION_TIMEOUT,
+    _DEFAULT_TRANSLATION_TIMEOUT,
     StreamTranscriber,
     TranscriptionEngine,
 )
@@ -405,9 +406,11 @@ class TestStreamTranscriberTimeout:
         # タイムアウトしても文脈バッファには追加される
         assert "こんにちは" in transcriber._context_buffer
 
-    def test_translation_timeout_constant_is_5_seconds(self):
-        """タイムアウト定数が5秒であることを確認"""
-        assert TRANSLATION_TIMEOUT == 5.0
+    def test_translation_timeout_default_is_10_seconds(self):
+        """デフォルトタイムアウトが10秒であることを確認"""
+        assert _DEFAULT_TRANSLATION_TIMEOUT == 10.0
+        # 環境変数未設定時は TRANSLATION_TIMEOUT もデフォルト値
+        # 注: テスト環境で LIVECAP_TRANSLATION_TIMEOUT が設定されている場合は異なる値になる
 
 
 class TestStreamTranscriberReset:
