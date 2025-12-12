@@ -79,10 +79,82 @@ StreamTranscriber にリアルタイム翻訳機能を統合し、ASR + 翻訳�
 | 統合方式 | translator パラメータ追加 | 継承より合成、後方互換性 |
 | TranscriptionResult | `translated_text` + `target_language` 追加 | `language` を source として再利用 |
 | デフォルト言語 | なし（translator 設定時は必須） | 明示的指定でミス防止 |
-| context_sentences | translator のデフォルトを使用 | 各エンジンに最適な設定を尊重 |
+| context_sentences | translator のプロパティから取得 | 各エンジンに最適な設定を尊重 |
+| コンテキストバッファ | `deque(maxlen=MAX)` で制限 | 長時間セッションのメモリ保護 |
 | 翻訳エラー | `translated_text=None` + 警告ログ | 主機能（文字起こし）を保護 |
 | 非同期翻訳 | Phase 5 では同期のみ | 複雑性を避け、Phase 6 で検討 |
 | ライフサイクル | 呼び出し側が管理 | engine と同じパターン、一貫性 |
+
+### 実装上の注意点
+
+#### 1. context_sentences の公開アクセス
+
+現在 `BaseTranslator._default_context_sentences` はプライベート属性。Phase 5 実装時に公開プロパティを追加:
+
+```python
+# BaseTranslator に追加
+@property
+def default_context_sentences(self) -> int:
+    """文脈として使用するデフォルトの文数"""
+    return self._default_context_sentences
+```
+
+#### 2. コンテキストバッファのサイズ制限
+
+長時間セッションでのメモリ成長を防ぐため `collections.deque` を使用:
+
+```python
+from collections import deque
+
+MAX_CONTEXT_BUFFER = 100  # 最大100文を保持
+
+class StreamTranscriber:
+    def __init__(self, ...):
+        self._context_buffer: deque[str] = deque(maxlen=MAX_CONTEXT_BUFFER)
+```
+
+#### 3. 同期翻訳の性能制限
+
+Phase 5 では同期翻訳のみサポート。以下の制限事項を認識:
+
+| 翻訳エンジン | 想定レイテンシ | リアルタイム性への影響 |
+|-------------|--------------|---------------------|
+| Google | 100-300ms | 低（許容範囲） |
+| OPUS-MT (CPU) | 50-200ms | 低（許容範囲） |
+| Riva-4B (GPU) | 500-2000ms | **高**（ASR ブロック可能性） |
+
+**軽減策**（Phase 5 暫定）:
+- 翻訳タイムアウト（5秒）を設定し、超過時は `translated_text=None` で継続
+- Riva-4B 使用時は警告ログを出力
+- 本格的な非同期対応は Phase 6 で実装
+
+#### 4. 言語ペアの事前バリデーション
+
+`translator.get_supported_pairs()` が空でない場合、初期化時に警告:
+
+```python
+if translator:
+    pairs = translator.get_supported_pairs()
+    if pairs and (source_lang, target_lang) not in pairs:
+        logger.warning(
+            "Language pair (%s -> %s) may not be supported by %s",
+            source_lang, target_lang, translator.get_translator_name()
+        )
+```
+
+**Note**: Google は全ペア対応（`get_supported_pairs()` が空）のため、警告は出ない。
+
+#### 5. 破壊的変更の影響範囲
+
+`TranscriptionResult` は Phase 1 で追加された新 API のため、破壊的変更を容認:
+
+| 変更対象 | 更新必要性 |
+|---------|----------|
+| `livecap_core/transcription/result.py` | ✅ フィールド追加 |
+| `livecap_core/transcription/stream.py` | ✅ パラメータ追加、翻訳処理追加 |
+| `tests/core/transcription/test_result.py` | ✅ 新フィールドのテスト追加 |
+| `tests/core/transcription/test_stream.py` | ✅ 翻訳統合テスト追加 |
+| 外部依存コード | ❌ なし（新 API のため） |
 
 ### 主要変更
 
@@ -106,6 +178,10 @@ StreamTranscriber にリアルタイム翻訳機能を統合し、ASR + 翻訳�
 
 2. **StreamTranscriber の拡張**
    ```python
+   from collections import deque
+
+   MAX_CONTEXT_BUFFER = 100
+
    class StreamTranscriber:
        def __init__(
            self,
@@ -119,7 +195,7 @@ StreamTranscriber にリアルタイム翻訳機能を統合し、ASR + 翻訳�
            self._translator = translator
            self._source_lang = source_lang
            self._target_lang = target_lang
-           self._context_buffer: List[str] = []
+           self._context_buffer: deque[str] = deque(maxlen=MAX_CONTEXT_BUFFER)
 
            # バリデーション
            if translator:
@@ -127,6 +203,13 @@ StreamTranscriber にリアルタイム翻訳機能を統合し、ASR + 翻訳�
                    raise ValueError("Translator not initialized. Call load_model() first.")
                if source_lang is None or target_lang is None:
                    raise ValueError("source_lang and target_lang are required when translator is set.")
+               # 言語ペアの事前警告
+               pairs = translator.get_supported_pairs()
+               if pairs and (source_lang, target_lang) not in pairs:
+                   logger.warning(
+                       "Language pair (%s -> %s) may not be supported by %s",
+                       source_lang, target_lang, translator.get_translator_name()
+                   )
    ```
 
 3. **翻訳パイプラインの追加**
@@ -140,17 +223,20 @@ StreamTranscriber にリアルタイム翻訳機能を統合し、ASR + 翻訳�
        target_language = None
        if self._translator and text.strip():
            try:
-               # translator のデフォルト context_sentences を使用
-               context_len = self._translator._default_context_sentences
+               # 公開プロパティから context_sentences を取得
+               context_len = self._translator.default_context_sentences
+               context = list(self._context_buffer)[-context_len:]
                trans_result = self._translator.translate(
                    text,
                    self._source_lang,
                    self._target_lang,
-                   context=self._context_buffer[-context_len:],
+                   context=context,
                )
                translated_text = trans_result.text
                target_language = self._target_lang
                self._context_buffer.append(text)
+           except TimeoutError:
+               logger.warning("Translation timed out, continuing without translation")
            except Exception as e:
                logger.warning(f"Translation failed: {e}")
                # 翻訳失敗しても文字起こし結果は返す
@@ -209,22 +295,26 @@ with StreamTranscriber(engine=engine) as transcriber:
 
 ### 実装タスク
 
-1. `TranscriptionResult` に `translated_text`, `target_language` フィールド追加
-2. `StreamTranscriber.__init__` に translator 関連パラメータ追加
-3. 初期化時のバリデーション実装
-4. 文脈バッファ管理の実装
-5. `_transcribe_segment` / `_transcribe_segment_async` での翻訳処理追加
-6. 翻訳エラー時の警告ログ実装
-7. ユニットテスト作成
-8. 統合テスト作成
-9. サンプルスクリプト作成
+1. `BaseTranslator` に `default_context_sentences` プロパティ追加
+2. `TranscriptionResult` に `translated_text`, `target_language` フィールド追加
+3. `StreamTranscriber.__init__` に translator 関連パラメータ追加
+4. 初期化時のバリデーション実装（言語ペア警告含む）
+5. 文脈バッファ管理の実装（`deque(maxlen=MAX_CONTEXT_BUFFER)`）
+6. `_transcribe_segment` / `_transcribe_segment_async` での翻訳処理追加
+7. 翻訳タイムアウト処理の実装
+8. 翻訳エラー時の警告ログ実装
+9. ユニットテスト作成
+10. 統合テスト作成
+11. サンプルスクリプト作成
 
 ### 変更ファイル
 
 | ファイル | 操作 | 説明 |
 |---------|------|------|
+| `livecap_core/translation/base.py` | 更新 | `default_context_sentences` プロパティ追加 |
 | `livecap_core/transcription/result.py` | 更新 | 翻訳フィールド追加 |
-| `livecap_core/transcription/stream.py` | 更新 | translator 統合 |
+| `livecap_core/transcription/stream.py` | 更新 | translator 統合、deque バッファ、タイムアウト |
+| `tests/core/translation/test_base.py` | 更新 | プロパティのテスト |
 | `tests/core/transcription/test_result.py` | 更新 | 新フィールドのテスト |
 | `tests/core/transcription/test_stream.py` | 更新 | 翻訳統合テスト |
 | `tests/integration/test_stream_translation.py` | 新規 | ASR+翻訳統合テスト |
@@ -334,10 +424,13 @@ from livecap_core import TranslatorFactory  # トップレベルから直接
 
 ### Phase 5（❌ 未完了）
 
+- [ ] `BaseTranslator.default_context_sentences` プロパティが追加されている
 - [ ] `TranscriptionResult` に `translated_text`, `target_language` フィールドが追加されている
 - [ ] `StreamTranscriber` に `translator`, `source_lang`, `target_lang` パラメータが追加されている
 - [ ] translator 設定時の初期化バリデーションが実装されている
-- [ ] 文脈バッファ管理が実装されている（translator の `_default_context_sentences` を使用）
+- [ ] 言語ペアの事前警告が実装されている
+- [ ] 文脈バッファ管理が `deque(maxlen=...)` で実装されている
+- [ ] 翻訳タイムアウト処理が実装されている
 - [ ] 翻訳エラー時に `translated_text=None` + 警告ログが出力される
 - [ ] translator なしの後方互換動作が維持されている
 - [ ] ユニットテストがパスする
