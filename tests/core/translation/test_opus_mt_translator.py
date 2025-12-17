@@ -77,14 +77,22 @@ class TestOpusMTTranslatorBasic:
         assert pairs == [("ja", "en")]
 
     def test_default_context_sentences(self):
-        """デフォルト文脈数"""
+        """デフォルト文脈数は0（文脈無効）"""
         translator = OpusMTTranslator()
-        assert translator._default_context_sentences == 2
+        # OPUS-MT は改行を保持せず文境界検出が不安定なため、デフォルトは0
+        # See: https://github.com/Mega-Gorilla/livecap-cli/issues/190
+        assert translator._default_context_sentences == 0
 
     def test_custom_context_sentences(self):
         """カスタム文脈数"""
         translator = OpusMTTranslator(default_context_sentences=5)
         assert translator._default_context_sentences == 5
+
+    def test_context_disabled_by_default(self):
+        """デフォルトでは文脈が使用されないことを確認"""
+        translator = OpusMTTranslator()
+        # default_context_sentences=0 なので、context を渡しても使用されない
+        assert translator.default_context_sentences == 0
 
 
 class TestOpusMTTranslatorNotLoaded:
@@ -103,7 +111,10 @@ class TestOpusMTTranslatorMocked:
     @pytest.fixture
     def mock_translator(self):
         """モック済みトランスレータ"""
-        translator = OpusMTTranslator(source_lang="ja", target_lang="en")
+        # 文脈テスト用に default_context_sentences=2 を設定
+        translator = OpusMTTranslator(
+            source_lang="ja", target_lang="en", default_context_sentences=2
+        )
 
         # モックモデルとトークナイザー
         mock_model = MagicMock()
@@ -315,10 +326,33 @@ class TestOpusMTTranslatorIntegration:
         translator.cleanup()
 
     def test_translate_with_context_real(self):
-        """文脈付き翻訳（実モデル）"""
+        """文脈付き翻訳（実モデル）
+
+        Note:
+            デフォルトでは default_context_sentences=0 のため、明示的に有効化。
+            文脈抽出は不安定なため、このテストでは翻訳が実行されることのみを確認。
+        """
+        # 文脈を使用するため明示的に有効化
+        translator = OpusMTTranslator(
+            source_lang="ja", target_lang="en", default_context_sentences=2
+        )
+        translator.load_model()
+
+        context = ["昨日は友達と遊んだ。"]
+        result = translator.translate("今日は疲れている。", "ja", "en", context=context)
+
+        assert result.text
+        assert result.original_text == "今日は疲れている。"
+
+        translator.cleanup()
+
+    def test_translate_without_context_default(self):
+        """デフォルト（文脈なし）での翻訳"""
+        # デフォルトでは default_context_sentences=0
         translator = OpusMTTranslator(source_lang="ja", target_lang="en")
         translator.load_model()
 
+        # 文脈を渡しても、default_context_sentences=0 なので使用されない
         context = ["昨日は友達と遊んだ。"]
         result = translator.translate("今日は疲れている。", "ja", "en", context=context)
 
