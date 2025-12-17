@@ -1,6 +1,6 @@
 # Issue #73: Phase 5 エンジン最適化
 
-> **Status**: 🚧 IN PROGRESS (Phase 5A ✅, Phase 5B 進行中)
+> **Status**: 🚧 IN PROGRESS (Phase 5A ✅, Phase 5B-1 ✅, Phase 5B-2 ✅, Phase 5B-3 未着手)
 > **作成日**: 2025-12-17
 > **親 Issue**: #64 [Epic] livecap-cli リファクタリング
 > **依存**: #71 [Phase3] パッケージ構造整理（完了）
@@ -159,13 +159,16 @@ rg "LoadPhase|ModelLoadingPhases|model_loading_phases" livecap_core/
 
 ##### NeMo エンジン (GPU)
 
-| Engine | Load(ms) | VRAM(MB) | Infer(5s, ms) | RTF |
-|--------|----------|----------|---------------|-----|
-| **Canary** | 67587 | 6830 | 402 | 0.080x |
-| **Parakeet** | 62528 | 2417 | 373 | 0.075x |
+| Engine | Load Cold(ms) | Load Cached(ms) | VRAM(MB) | Infer(5s, ms) | RTF |
+|--------|---------------|-----------------|----------|---------------|-----|
+| **Canary** | 67587 | **18052** | 6830 | 402 | 0.080x |
+| **Parakeet** | 62528 | **27472** | 2417 | 373 | 0.075x |
 
-> **Note**: 初回ロード時間が長い（60秒以上）。NeMo フレームワークのオーバーヘッドが主因。
-> Parakeet は VRAM 効率が良好（2.4GB vs Canary の 6.8GB）。
+> **Note**:
+> - **Load Cold**: 初回ロード（モデルダウンロード含む）
+> - **Load Cached**: キャッシュ済みモデルのロード（実運用時の値）
+> - キャッシュ済みでも 18〜27秒かかるのは NeMo フレームワークの初期化オーバーヘッドが主因
+> - Parakeet は VRAM 効率が良好（2.4GB vs Canary の 6.8GB）
 
 ##### 他エンジン
 
@@ -176,25 +179,29 @@ rg "LoadPhase|ModelLoadingPhases|model_loading_phases" livecap_core/
 
 #### 計測結果のまとめ
 
-| エンジン | ロード時間 | VRAM | RTF | 評価 |
-|----------|------------|------|-----|------|
+| エンジン | ロード時間（cached） | VRAM | RTF | 評価 |
+|----------|---------------------|------|-----|------|
 | WhisperS2T (large-v3-turbo) | 4.9s | N/A※ | **0.040x** | 最速推論、実用最適 |
 | WhisperS2T (base) | **0.4s** | N/A※ | 0.055x | 最速ロード |
-| Parakeet | 62.5s | 2417MB | 0.075x | VRAM 効率◎ |
-| Canary | 67.6s | 6830MB | 0.080x | NeMo オーバーヘッド大 |
+| Parakeet | **27.5s** | 2417MB | 0.075x | VRAM 効率◎ |
+| Canary | **18.1s** | 6830MB | 0.080x | NeMo オーバーヘッド大 |
 | Voxtral | 22.1s | 8923MB | OOM | 12GB+ VRAM 推奨 |
 
 > ※ WhisperS2T は CTranslate2 ベースのため torch VRAM 計測対象外
+> ※ NeMo エンジンの初回ロードはダウンロード込みで 60秒以上
 
-#### エンジン別改善ポイント
+#### エンジン別改善ポイント（Phase 5B-3 候補）
 
 | エンジン | 改善候補 | 優先度 | 計測結果からの考察 |
 |----------|----------|--------|-------------------|
-| **WhisperS2T** | バッチサイズ最適化、メモリキャッシュ戦略 | 高 | 既に十分高速（RTF 0.04x） |
+| **WhisperS2T** | バッチサイズ最適化、メモリキャッシュ戦略 | 低 | 既に十分高速（RTF 0.04x, ロード 0.4〜5s） |
 | **ReazonSpeech** | 不要なロギング削除、推論パス最適化 | 中 | 環境依存で未計測 |
-| **Parakeet** | 初期化の高速化（遅延ロード検討） | 中 | 62秒のロード時間改善が課題 |
-| **Canary** | 初期化の高速化 | 中 | 67秒のロード＋高 VRAM（6.8GB） |
+| **Parakeet** | 初期化の高速化（遅延ロード検討） | 中 | キャッシュ済み 27.5s、NeMo 初期化がボトルネック |
+| **Canary** | 初期化の高速化 | 中 | キャッシュ済み 18.1s＋高 VRAM（6.8GB） |
 | **Voxtral** | VRAM 最適化または 12GB+ 環境限定 | 低 | 現状 11.6GB では OOM |
+
+> **Note**: NeMo エンジンのロード時間（18〜27秒）は NeMo フレームワーク自体の初期化が主因。
+> 大幅な改善には NeMo の遅延インポートや軽量ラッパーの検討が必要だが、投資対効果は要検討。
 
 ---
 
@@ -209,13 +216,30 @@ rg "LoadPhase|ModelLoadingPhases|model_loading_phases" livecap_core/
 - [x] `model_loading_phases.py` 削除 — PR #194
 - [x] 全テストが通る（233 passed）
 
-### Phase 5B 完了条件
+### Phase 5B-1 完了条件（コードクリーンアップ）✅
 
-- [x] ベースライン計測データが記録されている — PR #196
+- [x] `check_nemo_availability()` を共通モジュールに抽出 — PR #196
+- [x] 重複インポートの整理 — PR #196
+- [x] ログモジュールの統一 (`logger = logging.getLogger(__name__)`) — PR #196
+- [x] 不要コードの削除（ReazonSpeech GPU クリーンアップ） — PR #196
+- [x] 全テストが通る（233 passed）
+
+### Phase 5B-2 完了条件（ベースライン計測）✅
+
+- [x] 全エンジンのベースライン計測データが記録されている — PR #196
+- [x] Cold/Cached ロード時間の区別が明確 — 本コミット
+- [x] 計測方法の制限事項が文書化されている（CTranslate2 VRAM 等）
+
+### Phase 5B-3 完了条件（最適化実装）⬜ 未着手
+
 - [ ] 各エンジンの `load_time_cached` が改善または維持
 - [ ] RTF が改善または維持
 - [ ] メモリ使用量が悪化していない
-- [x] 全テストが通る（233 passed）
+- [ ] 全テストが通る
+
+> **Note**: Phase 5B-3 は計測結果を踏まえた上での最適化実装フェーズ。
+> 現状 WhisperS2T は十分高速なため、NeMo エンジンの改善が主な対象となる。
+> ただし NeMo 初期化オーバーヘッドの改善は投資対効果の検討が必要。
 
 ---
 
@@ -235,11 +259,27 @@ rg "LoadPhase|ModelLoadingPhases|model_loading_phases" livecap_core/
 6. ✅ テスト実行（233 passed）
 7. ✅ PR #194 作成・レビュー・マージ
 
-### Step 3: Phase 5B 実装（現在のステップ）
+### Step 3: Phase 5B-1 実装 ✅
 
-1. ⬜ ブランチ作成: `refactor/issue-73-phase5b-engine-optimization`
-2. ⬜ コード分析・改善ポイント特定
-3. ⬜ 改善実装
+1. ✅ ブランチ作成: `refactor/issue-73-phase5b-code-cleanup`
+2. ✅ `nemo_utils.py` 作成（共通関数抽出）
+3. ✅ インポート整理、ログ統一
+4. ✅ 不要コード削除
+5. ✅ テスト実行（233 passed）
+6. ✅ PR #196 作成・レビュー・マージ
+
+### Step 4: Phase 5B-2 実装 ✅
+
+1. ✅ 全エンジンのベースライン計測
+2. ✅ Cold/Cached ロード時間の計測・記録
+3. ✅ 計測結果を計画ドキュメントに記録
+4. ✅ 計測制限事項の文書化（CTranslate2 VRAM 等）
+
+### Step 5: Phase 5B-3 実装（未着手）
+
+1. ⬜ 改善対象エンジンの選定（投資対効果の検討）
+2. ⬜ 改善実装
+3. ⬜ 改善後の計測・ベースラインとの比較
 4. ⬜ テスト実行
 5. ⬜ PR 作成・レビュー
 
