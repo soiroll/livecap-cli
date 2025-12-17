@@ -156,23 +156,42 @@ rg "LoadPhase|ModelLoadingPhases|model_loading_phases" livecap_core/
 
 > **Note**: RTF < 1.0 はリアルタイムより高速。large-v3-turbo が最も高速（RTF 0.040x = 25倍速）
 
+##### NeMo エンジン (GPU)
+
+| Engine | Load(ms) | VRAM(MB) | Infer(5s, ms) | RTF |
+|--------|----------|----------|---------------|-----|
+| **Canary** | 67587 | 6830 | 402 | 0.080x |
+| **Parakeet** | 62528 | 2417 | 373 | 0.075x |
+
+> **Note**: 初回ロード時間が長い（60秒以上）。NeMo フレームワークのオーバーヘッドが主因。
+> Parakeet は VRAM 効率が良好（2.4GB vs Canary の 6.8GB）。
+
 ##### 他エンジン
 
 | Engine | Status | Note |
 |--------|--------|------|
-| ReazonSpeech | N/A | `sherpa_onnx` 依存が環境未インストール |
-| Parakeet/Canary | 未計測 | NeMo 依存 |
-| Voxtral | 未計測 | Transformers 依存 |
+| ReazonSpeech | N/A | `sherpa_onnx` 依存（`libonnxruntime.so` 不足）で環境未対応 |
+| Voxtral | Load OK, OOM | ロード成功（VRAM 8923MB）だが推論時に OOM。RTX 4070 Ti（11.6GB）では不足 |
+
+#### 計測結果のまとめ
+
+| エンジン | ロード時間 | VRAM | RTF | 評価 |
+|----------|------------|------|-----|------|
+| WhisperS2T (large-v3-turbo) | 4.9s | - | **0.040x** | 最速推論、実用最適 |
+| WhisperS2T (base) | **0.4s** | 9MB | 0.055x | 最速ロード |
+| Parakeet | 62.5s | 2417MB | 0.075x | VRAM 効率◎ |
+| Canary | 67.6s | 6830MB | 0.080x | NeMo オーバーヘッド大 |
+| Voxtral | 22.1s | 8923MB | OOM | 12GB+ VRAM 推奨 |
 
 #### エンジン別改善ポイント
 
-| エンジン | 改善候補 | 優先度 |
-|----------|----------|--------|
-| **WhisperS2T** | バッチサイズ最適化、メモリキャッシュ戦略 | 高 |
-| **ReazonSpeech** | 不要なロギング削除、推論パス最適化 | 中 |
-| **Parakeet** | 初期化の高速化（遅延ロード検討） | 中 |
-| **Canary** | 初期化の高速化 | 中 |
-| **Voxtral** | 初期化の高速化 | 低 |
+| エンジン | 改善候補 | 優先度 | 計測結果からの考察 |
+|----------|----------|--------|-------------------|
+| **WhisperS2T** | バッチサイズ最適化、メモリキャッシュ戦略 | 高 | 既に十分高速（RTF 0.04x） |
+| **ReazonSpeech** | 不要なロギング削除、推論パス最適化 | 中 | 環境依存で未計測 |
+| **Parakeet** | 初期化の高速化（遅延ロード検討） | 中 | 62秒のロード時間改善が課題 |
+| **Canary** | 初期化の高速化 | 中 | 67秒のロード＋高 VRAM（6.8GB） |
+| **Voxtral** | VRAM 最適化または 12GB+ 環境限定 | 低 | 現状 11.6GB では OOM |
 
 ---
 
@@ -189,11 +208,11 @@ rg "LoadPhase|ModelLoadingPhases|model_loading_phases" livecap_core/
 
 ### Phase 5B 完了条件
 
-- [ ] ベースライン計測データが記録されている
+- [x] ベースライン計測データが記録されている — PR #196
 - [ ] 各エンジンの `load_time_cached` が改善または維持
 - [ ] RTF が改善または維持
 - [ ] メモリ使用量が悪化していない
-- [ ] 全テストが通る
+- [x] 全テストが通る（233 passed）
 
 ---
 
