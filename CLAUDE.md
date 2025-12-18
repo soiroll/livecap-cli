@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-livecap-core is a high-performance speech transcription library providing real-time transcription, file processing, and multi-ASR engine support. It supports 16 languages including Japanese, English, Chinese, and Korean.
+livecap-cli is a high-performance speech transcription CLI providing real-time transcription, file processing, and multi-ASR engine support. It supports 16 languages including Japanese, English, Chinese, and Korean.
 
 ## Build & Development Commands
 
@@ -21,9 +21,14 @@ uv run pytest tests/core                      # Unit tests only
 uv run pytest tests/integration               # Integration tests (requires FFmpeg)
 uv run pytest tests/integration/engines -m engine_smoke  # Engine smoke tests
 
-# CLI validation
-uv run livecap-core --info                    # Show installation diagnostics
-uv run livecap-core --as-json                 # JSON output
+# CLI commands
+uv run livecap-cli info                       # Show installation diagnostics
+uv run livecap-cli info --as-json             # JSON output
+uv run livecap-cli devices                    # List audio input devices
+uv run livecap-cli engines                    # List available ASR engines
+uv run livecap-cli translators                # List available translators
+uv run livecap-cli transcribe <file> -o out.srt  # File transcription
+uv run livecap-cli transcribe --realtime --mic 0  # Realtime transcription
 ```
 
 **FFmpeg for integration tests**: Place `ffmpeg`/`ffprobe` in `./ffmpeg-bin/` or set `LIVECAP_FFMPEG_BIN`.
