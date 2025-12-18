@@ -43,26 +43,20 @@ livecap-cli info --as-json
 
 | オプション | 説明 |
 |-----------|------|
+| `--ensure-ffmpeg` | FFmpeg バイナリの検出/ダウンロードを試行 |
 | `--as-json` | JSON 形式で出力 |
 
 ### 出力例
 
 ```
-livecap-cli diagnostics
-=======================
-Version:        0.1.0
-FFmpeg:         /usr/bin/ffmpeg
-FFprobe:        /usr/bin/ffprobe
-Models root:    /home/user/.cache/livecap/models
-Cache root:     /home/user/.cache/livecap/cache
-CUDA:           Available (NVIDIA GeForce RTX 4090)
-VAD backends:   silero, tenvad, webrtc
-
-Available engines:
-  - reazonspeech (ReazonSpeech K2 v2) [ja]
-  - whispers2t (WhisperS2T) [multilingual]
-  - parakeet (Parakeet TDT 0.6B) [en]
-  ...
+livecap-cli diagnostics:
+  FFmpeg: /usr/bin/ffmpeg
+  Models root: /home/user/.cache/LiveCap/PineLab/models
+  Cache root: /home/user/.cache/LiveCap/PineLab/cache
+  CUDA available: yes (NVIDIA GeForce RTX 4090)
+  VAD backends: silero, tenvad, webrtc
+  ASR engines: reazonspeech, whispers2t, parakeet, parakeet_ja, canary, voxtral
+  Translator: Google Translate extras=translation
 ```
 
 ---
@@ -78,10 +72,8 @@ livecap-cli devices
 ### 出力例
 
 ```
-Available audio input devices:
-  [0] HDA Intel PCH: ALC892 Analog (hw:0,0)
-  [1] USB Audio Device: USB Audio (hw:1,0)
-  [2] default
+[0] HDA Intel PCH: ALC892 Analog (hw:0,0)
+[1] USB Audio Device: USB Audio (hw:1,0) (default)
 ```
 
 ---
@@ -97,13 +89,12 @@ livecap-cli engines
 ### 出力例
 
 ```
-Available engines:
-  reazonspeech      ReazonSpeech K2 v2          [ja]
-  whispers2t        WhisperS2T                  [multilingual]
-  parakeet          Parakeet TDT 0.6B           [en]
-  parakeet_ja       Parakeet TDT CTC JA         [ja]
-  canary            Canary 1B Flash             [en, de, fr, es]
-  voxtral           Voxtral Small               [multilingual]
+reazonspeech: ReazonSpeech K2 v2 [cpu, cuda]
+whispers2t: WhisperS2T [cpu, cuda]
+parakeet: NVIDIA Parakeet TDT 0.6B v2 [cpu, cuda]
+parakeet_ja: NVIDIA Parakeet TDT CTC 0.6B JA [cpu, cuda]
+canary: NVIDIA Canary 1B Flash [cpu, cuda]
+voxtral: MistralAI Voxtral Mini 3B [cpu, cuda]
 ```
 
 ---
@@ -119,10 +110,9 @@ livecap-cli translators
 ### 出力例
 
 ```
-Available translators:
-  google            Google Translate            (requires: translation)
-  opus_mt           Helsinki-NLP Opus-MT        (requires: translation-local)
-  riva_instruct     NVIDIA Riva Instruct        (requires: translation-riva)
+google: Google Translate
+opus_mt: Helsinki-NLP Opus-MT
+riva_instruct: NVIDIA Riva Translate 4B Instruct (GPU)
 ```
 
 ---
@@ -137,8 +127,8 @@ Available translators:
 # 基本
 livecap-cli transcribe input.mp4 -o output.srt
 
-# エンジン指定
-livecap-cli transcribe input.wav -o output.srt --engine whispers2t --device cuda
+# エンジン指定（--device gpu は内部で cuda にマップ）
+livecap-cli transcribe input.wav -o output.srt --engine whispers2t --device gpu
 
 # 翻訳付き
 livecap-cli transcribe input.mp4 -o output.srt --translate google --target-lang en
@@ -154,7 +144,7 @@ livecap-cli transcribe input.mp4 -o output.srt --language ja
 livecap-cli transcribe --realtime --mic 0
 
 # エンジンとデバイス指定
-livecap-cli transcribe --realtime --mic 0 --engine whispers2t --device cuda
+livecap-cli transcribe --realtime --mic 0 --engine whispers2t --device gpu
 
 # VAD バックエンド指定
 livecap-cli transcribe --realtime --mic 0 --vad silero
@@ -232,9 +222,12 @@ livecap-cli transcribe --realtime --mic 0 --language ja --engine whispers2t
 
 | 変数 | 説明 | デフォルト |
 |------|------|----------|
-| `LIVECAP_CORE_MODELS_DIR` | モデルキャッシュディレクトリ | `~/.cache/livecap/models` |
-| `LIVECAP_CORE_CACHE_DIR` | 一般キャッシュディレクトリ | `~/.cache/livecap/cache` |
+| `LIVECAP_CORE_MODELS_DIR` | モデルキャッシュディレクトリ | `appdirs.user_cache_dir("LiveCap", "PineLab")/models` |
+| `LIVECAP_CORE_CACHE_DIR` | 一般キャッシュディレクトリ | `appdirs.user_cache_dir("LiveCap", "PineLab")/cache` |
 | `LIVECAP_FFMPEG_BIN` | FFmpeg バイナリディレクトリ | システム PATH |
+
+> **Note**: appdirs がない場合は `~/.livecap/{models,cache}` にフォールバック。
+> Linux: `~/.cache/LiveCap/PineLab/...`、macOS: `~/Library/Caches/LiveCap/...`、Windows: `%LOCALAPPDATA%\PineLab\LiveCap\Cache\...`
 
 ---
 

@@ -60,8 +60,8 @@ livecap-cli transcribe input.mp4 -o output.srt --translate google --target-lang 
 ```python
 from livecap_cli import StreamTranscriber, MicrophoneSource, EngineFactory
 
-# エンジン初期化
-engine = EngineFactory.create_engine("whispers2t_base", device="cuda")
+# エンジン初期化（whispers2t + model_size で指定）
+engine = EngineFactory.create_engine("whispers2t", device="cuda", model_size="base")
 engine.load_model()
 
 # マイクから文字起こし
@@ -76,7 +76,7 @@ with StreamTranscriber(engine=engine) as transcriber:
 ```python
 from livecap_cli import FileTranscriptionPipeline, EngineFactory
 
-engine = EngineFactory.create_engine("whispers2t_base", device="cuda")
+engine = EngineFactory.create_engine("whispers2t", device="cuda", model_size="base")
 engine.load_model()
 
 pipeline = FileTranscriptionPipeline()
@@ -93,13 +93,13 @@ VAD（音声活動検出）はデフォルトでインストールされます�
 
 | Extra | 内容 | 用途 |
 |-------|------|------|
-| `recommended` | `engines-torch`, `translation` | 推奨セット |
+| `recommended` | `deep-translator` | 推奨セット（Google翻訳） |
 | `all` | 全機能 | フル機能セット |
 | `engines-torch` | `torch`, `reazonspeech-k2-asr` | PyTorch 系エンジン |
 | `engines-nemo` | `nemo-toolkit` | NVIDIA NeMo エンジン |
 | `translation` | `deep-translator` | 翻訳機能（Google 翻訳） |
-| `translation-local` | `transformers`, `sentencepiece` | ローカル翻訳（Opus-MT） |
-| `translation-riva` | `nvidia-riva-client` | NVIDIA Riva 翻訳 |
+| `translation-local` | `ctranslate2`, `transformers` | ローカル翻訳（Opus-MT） |
+| `translation-riva` | `transformers`, `torch`, `accelerate` | ローカル翻訳（Riva 4B） |
 | `benchmark` | `javad`, `jiwer` | VAD ベンチマーク |
 | `optimization` | `optuna`, `plotly` | VAD パラメータ最適化 |
 | `dev` | `pytest` | 開発・テスト |
@@ -120,11 +120,13 @@ uv sync --extra engines-torch
 | ID | モデル | サイズ | 言語 |
 |----|--------|--------|------|
 | `reazonspeech` | ReazonSpeech K2 v2 | 159MB | ja |
-| `whispers2t_base` | Whisper Base | 74MB | 多言語 |
-| `whispers2t_large_v3` | Whisper Large-v3 | 1.55GB | 多言語 |
+| `whispers2t` | WhisperS2T | 可変 | 多言語 |
 | `parakeet` | Parakeet TDT 0.6B | 1.2GB | en |
 | `parakeet_ja` | Parakeet TDT CTC JA | 600MB | ja |
 | `canary` | Canary 1B Flash | 1.5GB | en, de, fr, es |
+| `voxtral` | Voxtral Mini 3B | 3GB | 多言語 |
+
+> `whispers2t` は `--model-size` で `tiny`, `base`, `small`, `medium`, `large-v3`, `large-v3-turbo` を選択可能
 
 ## サンプルスクリプト
 
@@ -148,7 +150,7 @@ python examples/realtime/custom_vad_config.py --list-profiles
 
 ```bash
 LIVECAP_DEVICE=cpu      # デバイス（cuda/cpu）
-LIVECAP_ENGINE=whispers2t_base  # エンジン
+LIVECAP_ENGINE=whispers2t  # エンジン
 LIVECAP_LANGUAGE=ja     # 言語
 ```
 

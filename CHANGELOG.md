@@ -7,11 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.1.0] - 2025-12-18
+Epic #64 (livecap-cli refactoring) - completion of all 6 phases.
 
-Initial release as `livecap-cli` (formerly `livecap-core`).
-
-This release represents the completion of Epic #64 - a major refactoring effort spanning 6 phases.
+This represents the completion of a major refactoring effort spanning 6 phases.
+Package renamed from `livecap-core` to `livecap-cli`.
 
 ### Added
 
@@ -36,7 +35,7 @@ New CLI with subcommand architecture:
 - `--device <auto|gpu|cpu>` - Device selection
 
 **Package extras:**
-- `recommended`: engines-torch + translation (common use case)
+- `recommended`: Google translation (deep-translator)
 - `all`: All optional dependencies
 
 #### Phase 5: Engine Optimizations ([#73], [#194], [#196], [#197])
@@ -220,8 +219,7 @@ print(result.to_srt_entry(index=1))
 
 ---
 
-[Unreleased]: https://github.com/Mega-Gorilla/livecap-cli/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/Mega-Gorilla/livecap-cli/releases/tag/v0.1.0
+[Unreleased]: https://github.com/Mega-Gorilla/livecap-cli/compare/main...HEAD
 
 [#64]: https://github.com/Mega-Gorilla/livecap-cli/issues/64
 [#65]: https://github.com/Mega-Gorilla/livecap-cli/issues/65
