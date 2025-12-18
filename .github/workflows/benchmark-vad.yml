@@ -53,7 +53,7 @@ on:
         type: choice
         options:
           - default  # Hardcoded default parameters
-          - preset   # Optimized parameters from livecap_core/vad/presets.py
+          - preset   # Optimized parameters from livecap_cli/vad/presets.py
       runs:
         description: 'Number of runs per file for RTF measurement'
         required: true
@@ -207,7 +207,7 @@ jobs:
           $customVads = "${{ inputs.vads }}"
 
           # Get available engines and VADs from Python
-          $availableEngines = python -c "from livecap_core import EngineMetadata; print(','.join(EngineMetadata.get_all().keys()))"
+          $availableEngines = python -c "from livecap_cli.engines.metadata import EngineMetadata; print(','.join(EngineMetadata.get_all().keys()))"
           $availableVads = python -c "from benchmarks.vad.factory import get_all_vad_ids; print(','.join(get_all_vad_ids()))"
 
           Write-Host "=== Available Engines ==="

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-livecap-core is a high-performance speech transcription library providing real-time transcription, file processing, and multi-ASR engine support. It supports 16 languages including Japanese, English, Chinese, and Korean.
+livecap-cli is a high-performance speech transcription CLI providing real-time transcription, file processing, and multi-ASR engine support. It supports 16 languages including Japanese, English, Chinese, and Korean.
 
 ## Build & Development Commands
 
@@ -21,9 +21,14 @@ uv run pytest tests/core                      # Unit tests only
 uv run pytest tests/integration               # Integration tests (requires FFmpeg)
 uv run pytest tests/integration/engines -m engine_smoke  # Engine smoke tests
 
-# CLI validation
-uv run livecap-core --info                    # Show installation diagnostics
-uv run livecap-core --as-json                 # JSON output
+# CLI commands
+uv run livecap-cli info                       # Show installation diagnostics
+uv run livecap-cli info --as-json             # JSON output
+uv run livecap-cli devices                    # List audio input devices
+uv run livecap-cli engines                    # List available ASR engines
+uv run livecap-cli translators                # List available translators
+uv run livecap-cli transcribe <file> -o out.srt  # File transcription
+uv run livecap-cli transcribe --realtime --mic 0  # Realtime transcription
 ```
 
 **FFmpeg for integration tests**: Place `ffmpeg`/`ffprobe` in `./ffmpeg-bin/` or set `LIVECAP_FFMPEG_BIN`.
@@ -42,13 +47,13 @@ AudioSource (mic/file) → VADProcessor → StreamTranscriber → TranscriptionR
 
 ### Module Structure
 
-- **`livecap_core/`**: Public API surface
+- **`livecap_cli/`**: Public API surface
   - `transcription/stream.py`: `StreamTranscriber` - VAD + ASR orchestration
   - `audio_sources/`: `AudioSource`, `FileSource`, `MicrophoneSource`
   - `vad/`: VAD processor with pluggable backends (`backends/silero.py`)
   - `transcription/file_pipeline.py`: Batch file transcription to SRT
 
-- **`livecap_core/engines/`**: ASR engine adapters implementing `BaseEngine`
+- **`livecap_cli/engines/`**: ASR engine adapters implementing `BaseEngine`
   - `base_engine.py`: Abstract base with Template Method pattern
   - `engine_factory.py`: `EngineFactory.create_engine(engine_type, device, **engine_options)`
   - `metadata.py`: Engine registry with `EngineMetadata.default_params` for each engine
@@ -58,7 +63,7 @@ AudioSource (mic/file) → VADProcessor → StreamTranscriber → TranscriptionR
 
 ```python
 # StreamTranscriber usage
-from livecap_core import StreamTranscriber, MicrophoneSource, EngineFactory
+from livecap_cli import StreamTranscriber, MicrophoneSource, EngineFactory
 
 engine = EngineFactory.create_engine("whispers2t_base", device="cuda")
 engine.load_model()
@@ -78,7 +83,7 @@ class TranscriptionEngine(Protocol):
 
 ### Configuration
 
-- Engine defaults defined in `livecap_core/engines/metadata.py` via `EngineMetadata.default_params`
+- Engine defaults defined in `livecap_cli/engines/metadata.py` via `EngineMetadata.default_params`
 - Engine options passed via `**kwargs` to `EngineFactory.create_engine()`
 - VAD config via `VADConfig(threshold, min_speech_ms, min_silence_ms, speech_pad_ms)`
 

@@ -122,6 +122,9 @@ livecap-core --as-json        # JSON出力
 > 自己参照も `livecap-cli[...]` に更新する必要がある。Phase 6A と 6B を
 > 同一 PR で行うか、6A では自己参照を避けて依存を直接列挙することを推奨。
 
+> **実装時の選択:** 実際の実装では自己参照を避け、依存を直接列挙する方式を採用した。
+> これにより循環参照の懸念がなくなり、パッケージ名変更にも影響されない。
+
 **完了条件:**
 - [ ] `pip install livecap-core[recommended]` が動作 (または 6B と同時なら `livecap-cli[recommended]`)
 - [ ] `pip install livecap-core[all]` が動作 (または 6B と同時なら `livecap-cli[all]`)
@@ -163,7 +166,7 @@ mv livecap_core/ livecap_cli/
 ```
 
 > **Note:** 相対インポート (`from .engines import ...`) は影響を受けない。
-> 変更が必要なのは絶対インポート (`from livecap_core import ...`) のみ。
+> 変更が必要なのは絶対インポート (`from livecap_cli import ...`) のみ。
 
 #### 6B-1: エントリポイント変更 + サブコマンド構造の導入
 
@@ -318,7 +321,7 @@ Phase 6B (CLI実装 + エントリポイント変更)  [中リスク, 1-2日]
 - [ ] 既存テスト通過
 
 ### Phase 6B (CLI 実装 + エントリポイント変更)
-- [ ] `livecap_core/` → `livecap_cli/` にリネーム
+- [ ] `livecap_cli/` → `livecap_cli/` にリネーム
 - [ ] tests/examples/docs の import 文を更新
 - [ ] pyproject.toml 更新 (`name = "livecap-cli"`, エントリポイント変更)
 - [ ] サブコマンド構造導入（既存フラグは完全廃止）
@@ -348,7 +351,7 @@ Phase 6B (CLI実装 + エントリポイント変更)  [中リスク, 1-2日]
 | `livecap_cli/translation/metadata.py` | 翻訳器メタデータ |
 | `examples/realtime/async_microphone.py` | マイク入力サンプル |
 
-> **Note:** `livecap_core/` は `livecap_cli/` にリネームされる（Phase 6B-0）。
+> **Note:** `livecap_cli/` は `livecap_cli/` にリネームされる（Phase 6B-0）。
 
 ---
 

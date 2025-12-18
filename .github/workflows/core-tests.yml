@@ -84,11 +84,11 @@ jobs:
         run: |
           uv run python - <<'PY'
           import importlib
-          import livecap_core
+          import livecap_cli
 
           optional_module = {
-              "engines-torch": "livecap_core.engines.reazonspeech_engine",
-              "engines-nemo": "livecap_core.engines.parakeet_engine",
+              "engines-torch": "livecap_cli.engines.reazonspeech_engine",
+              "engines-nemo": "livecap_cli.engines.parakeet_engine",
           }["${{ matrix.extra }}"]
           importlib.import_module(optional_module)
           print("ok")
