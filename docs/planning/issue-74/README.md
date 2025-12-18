@@ -38,11 +38,14 @@ Issue #74 は livecap-core リファクタリングの Phase 6 として、CLI �
 ### 2. CLI (既存機能)
 
 ```bash
-# 現在のコマンド
+# 現在のコマンド（Phase 6B で廃止）
 livecap-core --info           # インストール診断
 livecap-core --ensure-ffmpeg  # FFmpeg確保
 livecap-core --as-json        # JSON出力
 ```
+
+> **注意:** 既存の CLI フラグは Phase 6B で完全に廃止し、サブコマンド構造に移行する。
+> Epic #64 の方針「互換性維持は不要」に従い、deprecation warning は設けない。
 
 **Issue #74 の目標コマンド:**
 
@@ -124,16 +127,27 @@ livecap-core --as-json        # JSON出力
 
 **目的:** `transcribe`, `devices`, `engines` コマンドの実装
 
+**互換性方針:** Epic #64 に従い、既存フラグ (`--info`, `--ensure-ffmpeg`, `--as-json`) は
+**完全に廃止**し、サブコマンド構造に移行する。deprecation warning は設けない。
+
 #### 6B-1: サブコマンド構造の導入
 
-現在の argparse を拡張し、サブコマンド構造を導入:
+現在の argparse を**完全に書き換え**、サブコマンド構造を導入:
 
 ```bash
-livecap-core info              # 現在の --info 相当
-livecap-core devices           # オーディオデバイス一覧
-livecap-core engines           # ASRエンジン一覧
-livecap-core translators       # 翻訳器一覧
-livecap-core transcribe [args] # 文字起こし
+livecap-cli info               # 診断情報（--as-json オプション付き）
+livecap-cli devices            # オーディオデバイス一覧
+livecap-cli engines            # ASRエンジン一覧
+livecap-cli translators        # 翻訳器一覧
+livecap-cli transcribe [args]  # 文字起こし
+```
+
+**廃止されるコマンド:**
+```bash
+# これらは動作しなくなる
+livecap-core --info            # → livecap-cli info
+livecap-core --ensure-ffmpeg   # → livecap-cli info --ensure-ffmpeg
+livecap-core --as-json         # → livecap-cli info --as-json
 ```
 
 #### 6B-2: devices コマンド
@@ -171,8 +185,8 @@ def cmd_translators(args):
 **マイク入力 (リアルタイム):**
 
 ```bash
-livecap-core transcribe --realtime --mic 0 \
-  --engine whispers2t --device cuda --language ja
+livecap-cli transcribe --realtime --mic 0 \
+  --engine whispers2t --device gpu --language ja
 ```
 
 実装: `examples/realtime/async_microphone.py` のロジックを CLI に統合
@@ -180,8 +194,8 @@ livecap-core transcribe --realtime --mic 0 \
 **ファイル入力:**
 
 ```bash
-livecap-core transcribe input.mp4 -o output.srt \
-  --engine whispers2t --device cuda --language ja
+livecap-cli transcribe input.mp4 -o output.srt \
+  --engine whispers2t --device gpu --language ja
 ```
 
 実装: `FileTranscriptionPipeline` を利用
@@ -201,15 +215,19 @@ livecap-core transcribe input.mp4 -o output.srt \
 > これは Issue #74 の仕様 (`auto/gpu/cpu`) に準拠し、ユーザーフレンドリーな表記を優先する。
 
 **完了条件:**
-- [ ] `livecap-core devices` が動作
-- [ ] `livecap-core engines` が動作
-- [ ] `livecap-core translators` が動作
-- [ ] `livecap-core transcribe --realtime --mic 0` が動作
-- [ ] `livecap-core transcribe input.mp4 -o output.srt` が動作
+- [ ] `livecap-cli info` が動作
+- [ ] `livecap-cli devices` が動作
+- [ ] `livecap-cli engines` が動作
+- [ ] `livecap-cli translators` が動作
+- [ ] `livecap-cli transcribe --realtime --mic 0` が動作
+- [ ] `livecap-cli transcribe input.mp4 -o output.srt` が動作
+- [ ] 旧フラグ (`--info` 等) が廃止されていることを確認
 
 ### Phase 6C: パッケージ名変更 (高リスク)
 
 **目的:** `livecap-core` → `livecap-cli` へのリネーム
+
+**互換性方針:** Epic #64 に従い、旧エントリポイント `livecap-core` は**完全に廃止**する。
 
 **影響範囲:**
 1. `pyproject.toml` の `name` フィールド
@@ -221,7 +239,7 @@ livecap-core transcribe input.mp4 -o output.srt \
 **リスク:**
 - 既存ユーザーへの影響（pip install 名が変更）
 - PyPI での新規パッケージ登録が必要
-- インポートパス `livecap_core` は**変更しない**（互換性維持）
+- インポートパス `livecap_core` は**変更しない**（Python API 互換性維持）
 
 **推奨:** Phase 6C は 6A/6B 完了後に慎重に実施
 
@@ -232,28 +250,14 @@ livecap-core transcribe input.mp4 -o output.srt \
 name = "livecap-cli"  # 変更
 
 [project.scripts]
-livecap-cli = "livecap_core.cli:main"  # 変更
-# livecap-core も互換性のため残す
-livecap-core = "livecap_core.cli:main"
+livecap-cli = "livecap_core.cli:main"  # 新規（唯一のエントリポイント）
+# livecap-core は廃止（Epic #64 方針）
 ```
-
-> **TODO: 互換性方針の決定**
->
-> Epic #64 では「互換性維持は不要」と明記されているが、Phase 6C では旧エントリポイント
-> `livecap-core` を残す案になっている。以下のいずれかを実装 PR 前に決定する:
->
-> | 方針 | 説明 |
-> |------|------|
-> | A. 完全削除 | 旧名を削除し、Epic 方針に従う |
-> | B. 一定期間維持 | 1-2 リリース後に削除（deprecation warning 付き） |
-> | C. 永続維持 | 旧名を永続的に維持（エイリアス） |
->
-> **推奨:** 方針 B（deprecation warning 付きで一定期間維持）
 
 **完了条件:**
 - [ ] `pip install livecap-cli` が動作
 - [ ] `livecap-cli transcribe ...` が動作
-- [ ] 互換性方針に従った旧名の扱い
+- [ ] 旧エントリポイント `livecap-core` が廃止されていることを確認
 
 ---
 
@@ -296,20 +300,19 @@ Phase 6C (パッケージ名変更)    [高リスク, 0.5日]
 - [ ] 既存テスト通過
 
 ### Phase 6B
-- [ ] サブコマンド構造導入
+- [ ] サブコマンド構造導入（既存フラグは完全廃止）
+- [ ] `info` コマンド実装
 - [ ] `devices` コマンド実装
 - [ ] `engines` コマンド実装
 - [ ] `translators` コマンド実装
 - [ ] `transcribe --realtime --mic` 実装
 - [ ] `transcribe <file> -o <output>` 実装
-- [ ] 既存フラグの扱い決定（`--info`, `--ensure-ffmpeg`, `--as-json`）
-  - 方針: サブコマンド `info` に移行し、旧フラグは deprecation warning 付きで維持
 - [ ] ユニットテスト追加
 - [ ] 既存テスト通過
 
 ### Phase 6C
-- [ ] pyproject.toml 更新
-- [ ] エントリポイント更新
+- [ ] pyproject.toml 更新 (`name = "livecap-cli"`)
+- [ ] エントリポイント更新（`livecap-core` 廃止）
 - [ ] ドキュメント更新
 - [ ] 既存テスト通過
 
