@@ -111,6 +111,10 @@ livecap-core --as-json        # JSON出力
 ]
 ```
 
+> **注意:** 自己参照形式 (`livecap-core[...]`) は pip/setuptools で動作するが、
+> PyPI 公開前は `.[translation]` のようなローカル参照形式でテストすること。
+> 実装時に循環依存や意図しない PyPI 参照が起きないか検証が必要。
+
 **完了条件:**
 - [ ] `pip install livecap-core[recommended]` が動作
 - [ ] `pip install livecap-core[all]` が動作
@@ -187,11 +191,14 @@ livecap-core transcribe input.mp4 -o output.srt \
 | オプション | 説明 | デフォルト |
 |-----------|------|-----------|
 | `--engine` | ASRエンジンID | `whispers2t` |
-| `--device` | デバイス (auto/cuda/cpu) | `auto` |
+| `--device` | デバイス (auto/gpu/cpu) | `auto` |
 | `--language` | 入力言語 | `ja` |
 | `--model-size` | WhisperS2Tモデルサイズ | `base` |
 | `--translate` | 翻訳器ID | なし |
 | `--target-lang` | 翻訳先言語 | `en` |
+
+> **デバイス表記について:** CLI では `gpu` を使用し、内部で `cuda` にマッピングする。
+> これは Issue #74 の仕様 (`auto/gpu/cpu`) に準拠し、ユーザーフレンドリーな表記を優先する。
 
 **完了条件:**
 - [ ] `livecap-core devices` が動作
@@ -230,10 +237,23 @@ livecap-cli = "livecap_core.cli:main"  # 変更
 livecap-core = "livecap_core.cli:main"
 ```
 
+> **TODO: 互換性方針の決定**
+>
+> Epic #64 では「互換性維持は不要」と明記されているが、Phase 6C では旧エントリポイント
+> `livecap-core` を残す案になっている。以下のいずれかを実装 PR 前に決定する:
+>
+> | 方針 | 説明 |
+> |------|------|
+> | A. 完全削除 | 旧名を削除し、Epic 方針に従う |
+> | B. 一定期間維持 | 1-2 リリース後に削除（deprecation warning 付き） |
+> | C. 永続維持 | 旧名を永続的に維持（エイリアス） |
+>
+> **推奨:** 方針 B（deprecation warning 付きで一定期間維持）
+
 **完了条件:**
 - [ ] `pip install livecap-cli` が動作
 - [ ] `livecap-cli transcribe ...` が動作
-- [ ] 旧名 `livecap-core` も引き続き動作（互換性）
+- [ ] 互換性方針に従った旧名の扱い
 
 ---
 
@@ -282,6 +302,8 @@ Phase 6C (パッケージ名変更)    [高リスク, 0.5日]
 - [ ] `translators` コマンド実装
 - [ ] `transcribe --realtime --mic` 実装
 - [ ] `transcribe <file> -o <output>` 実装
+- [ ] 既存フラグの扱い決定（`--info`, `--ensure-ffmpeg`, `--as-json`）
+  - 方針: サブコマンド `info` に移行し、旧フラグは deprecation warning 付きで維持
 - [ ] ユニットテスト追加
 - [ ] 既存テスト通過
 
