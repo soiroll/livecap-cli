@@ -122,6 +122,9 @@ livecap-core --as-json        # JSON出力
 > 自己参照も `livecap-cli[...]` に更新する必要がある。Phase 6A と 6B を
 > 同一 PR で行うか、6A では自己参照を避けて依存を直接列挙することを推奨。
 
+> **実装時の選択:** 実際の実装では自己参照を避け、依存を直接列挙する方式を採用した。
+> これにより循環参照の懸念がなくなり、パッケージ名変更にも影響されない。
+
 **完了条件:**
 - [ ] `pip install livecap-core[recommended]` が動作 (または 6B と同時なら `livecap-cli[recommended]`)
 - [ ] `pip install livecap-core[all]` が動作 (または 6B と同時なら `livecap-cli[all]`)
@@ -139,7 +142,7 @@ livecap-core --as-json        # JSON出力
 
 - 既存フラグ (`--info`, `--ensure-ffmpeg`, `--as-json`)
 - 旧エントリポイント (`livecap-core`)
-- 旧モジュール名 (`livecap_cli`) → `livecap_cli` に変更
+- 旧モジュール名 (`livecap_core`) → `livecap_cli` に変更
 
 > **Python API について:** パッケージ名 (`livecap-cli`) とモジュール名 (`livecap_cli`) を
 > 一致させることで、ユーザー体験を向上させる。`pip install livecap-cli` したら
@@ -148,14 +151,14 @@ livecap-core --as-json        # JSON出力
 
 #### 6B-0: モジュール名変更
 
-`livecap_cli/` ディレクトリを `livecap_cli/` にリネーム:
+`livecap_core/` ディレクトリを `livecap_cli/` にリネーム:
 
 ```bash
 # ディレクトリリネーム
-mv livecap_cli/ livecap_cli/
+mv livecap_core/ livecap_cli/
 
 # 影響範囲
-- livecap_cli/ → livecap_cli/  # モジュールディレクトリ
+- livecap_core/ → livecap_cli/  # モジュールディレクトリ
 - tests/         # import 文を更新
 - examples/      # import 文を更新
 - docs/          # 参照を更新
