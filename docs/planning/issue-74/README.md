@@ -208,6 +208,7 @@ livecap-cli transcribe input.mp4 -o output.srt \
 | `--device` | デバイス (auto/gpu/cpu) | `auto` |
 | `--language` | 入力言語 | `ja` |
 | `--model-size` | WhisperS2Tモデルサイズ | `base` |
+| `--vad` | VADバックエンド (auto/silero/tenvad/webrtc) | `auto` |
 | `--translate` | 翻訳器ID | なし |
 | `--target-lang` | 翻訳先言語 | `en` |
 
@@ -274,7 +275,28 @@ livecap-cli = "livecap_core.cli:main"  # 新規（唯一のエントリポイン
 
 ### VAD オプション
 
-現在は Silero VAD がデフォルト。CLI での VAD バックエンド選択は将来課題。
+VAD バックエンド選択は **既に API レベルで実装済み**:
+
+```python
+# 利用可能なバックエンド
+from livecap_core.vad.backends import SileroVAD, TenVAD, WebRTCVAD
+from livecap_core.vad import VADProcessor
+
+# 言語最適化 VAD 自動選択
+processor = VADProcessor.from_language("ja")  # → TenVAD (日本語最適)
+processor = VADProcessor.from_language("en")  # → WebRTC (英語最適)
+```
+
+**Phase 6B で追加すべき CLI オプション:**
+
+```bash
+livecap-cli transcribe --vad auto        # 言語に最適な VAD を自動選択（推奨）
+livecap-cli transcribe --vad silero      # Silero VAD
+livecap-cli transcribe --vad tenvad      # TenVAD（日本語向け）
+livecap-cli transcribe --vad webrtc      # WebRTC VAD（英語向け）
+```
+
+> **デフォルト:** `--vad auto`（`--language` に基づき `VADProcessor.from_language()` で選択）
 
 ---
 
