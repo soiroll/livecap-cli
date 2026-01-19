@@ -1,7 +1,12 @@
 """MistralAI Voxtral Mini 3Bエンジンの実装 - Template Method版
 
-Note: VoxtralはTransformersの最新版（git+https://github.com/huggingface/transformers）が必要です。
-また、mistral-common[audio]>=1.8.1も必要です。
+Required dependencies:
+    pip install livecap-cli[engines-voxtral]
+
+This installs:
+- torch (for inference)
+- transformers>=4.57.0 (for VoxtralForConditionalGeneration)
+- mistral-common[audio]>=1.8.1 (for audio processing)
 """
 import os
 import logging
