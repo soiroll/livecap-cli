@@ -23,7 +23,7 @@ from livecap_cli.utils import (
 )
 
 # NeMo framework - 共通モジュールから遅延インポート
-from .nemo_utils import check_nemo_availability
+from .nemo_utils import check_nemo_availability, prepare_nemo_environment
 
 logger = logging.getLogger(__name__)
 
@@ -125,6 +125,9 @@ class CanaryEngine(BaseEngine):
 
         self.report_progress(20, f"Downloading model from Hugging Face: {self.model_name}")
 
+        # NeMo 環境準備（PyInstaller 互換性のため）
+        prepare_nemo_environment()
+
         # ここで初めてNeMoモジュールをインポート
         import nemo.collections.asr as nemo_asr
         from nemo.utils import logging as nemo_logging
@@ -191,6 +194,9 @@ class CanaryEngine(BaseEngine):
             self.report_progress(90, "Loading from cache: Canary")
             logger.info(f"キャッシュからモデルを取得: {cache_key}")
             return cached_model
+
+        # NeMo 環境準備（PyInstaller 互換性のため）
+        prepare_nemo_environment()
 
         # NeMoモジュールをインポート
         import nemo.collections.asr as nemo_asr
