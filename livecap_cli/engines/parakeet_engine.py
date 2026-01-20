@@ -39,7 +39,7 @@ from livecap_cli.utils import (
 )
 
 # NeMo framework - 共通モジュールから遅延インポート
-from .nemo_utils import check_nemo_availability
+from .nemo_utils import check_nemo_availability, prepare_nemo_environment
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +123,9 @@ class ParakeetEngine(BaseEngine):
             logger.info(f"ローカルファイルが存在: {model_path}")
             return
 
+        # NeMo 環境準備（PyInstaller 互換性のため）
+        prepare_nemo_environment()
+
         # ここで初めてNeMoモジュールをインポート
         import nemo.collections.asr as nemo_asr
         from nemo.utils import logging as nemo_logging
@@ -183,6 +186,9 @@ class ParakeetEngine(BaseEngine):
         if cached_model is not None:
             logger.info(f"キャッシュからモデルを取得: {cache_key}")
             return cached_model
+
+        # NeMo 環境準備（PyInstaller 互換性のため）
+        prepare_nemo_environment()
 
         # NeMoモジュールをインポート
         import nemo.collections.asr as nemo_asr
