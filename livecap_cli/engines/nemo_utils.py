@@ -4,12 +4,16 @@ Canary, Parakeet エンジンで共有される NeMo 関連の機能を提供。
 
 PyInstaller 互換性:
     PyInstaller (frozen) 環境では、NeMo をインポートすると datasets ライブラリの
-    循環インポートエラーが発生するため、check_nemo_availability() では
-    importlib.util.find_spec() で存在確認のみを行う。
+    循環インポートエラーが発生する。これは NeMo が内部で datasets をインポートし、
+    datasets/packaged_modules/arrow/arrow.py が datasets.utils.logging にアクセス
+    する際に、datasets モジュールがまだ完全に初期化されていないために起こる。
+
+    対策:
+    1. check_nemo_availability() では importlib.util.find_spec() で存在確認のみ行う
+    2. prepare_nemo_environment() で datasets.utils を事前にインポートして初期化
+    3. 実際の NeMo インポートは各エンジンの関数内で行う
 
     通常の Python 環境では、実際にインポートを試行して依存関係の問題も検出する。
-    実際のインポートは prepare_nemo_environment() を呼び出した後、
-    各エンジンの関数内で行う。
 """
 import importlib.util
 import os
@@ -82,6 +86,7 @@ def prepare_nemo_environment() -> None:
     - matplotlib バックエンドを非対話的に設定
     - PyInstaller 互換性のための JIT パッチを適用
     - PyInstaller 環境での追加設定（torch._dynamo, TorchScript 無効化）
+    - PyInstaller 環境での datasets サブモジュール事前インポート（循環インポート回避）
 
     この関数は複数回呼び出しても安全（冪等性あり）。
     """
@@ -109,6 +114,21 @@ def prepare_nemo_environment() -> None:
         # TorchScript を無効化
         os.environ['PYTORCH_JIT'] = '0'
         logger.debug("PyInstaller 環境用の設定を適用しました")
+
+        # datasets サブモジュールを NeMo より先にインポート（循環インポート回避）
+        # NeMo は内部で datasets をインポートするが、PyInstaller の frozen importer では
+        # datasets/__init__.py が完全に初期化される前に datasets.utils にアクセスしようとして
+        # AttributeError が発生する。事前に datasets.utils をインポートすることで回避。
+        # See: https://github.com/Mega-Gorilla/livecap-cli/issues/216
+        try:
+            import datasets.utils
+            import datasets.utils.logging
+            logger.debug("datasets サブモジュールを事前インポートしました")
+        except ImportError as e:
+            logger.debug(f"datasets 事前インポートをスキップ: {e}")
+        except Exception as e:
+            # datasets が部分的にインストールされている場合など
+            logger.debug(f"datasets 事前インポート中に予期しないエラー: {e}")
 
     _NEMO_ENVIRONMENT_PREPARED = True
     logger.debug("NeMo 環境準備が完了しました")
