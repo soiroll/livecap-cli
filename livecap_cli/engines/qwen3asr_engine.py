@@ -24,7 +24,9 @@ from .model_memory_cache import ModelMemoryCache
 from livecap_cli.utils import (
     get_models_dir,
     detect_device,
+    unicode_safe_download_directory,
 )
+from livecap_cli.resources import get_model_manager
 
 logger = logging.getLogger(__name__)
 
@@ -231,11 +233,16 @@ class Qwen3ASREngine(BaseEngine):
 
         self.report_progress(80, "Initializing Qwen3-ASR model...")
 
-        # モデルをロード
-        model = Qwen3ASR(
-            model_path=self.model_name,
-            device=self.torch_device,
-        )
+        # ModelManager から HuggingFace キャッシュを使用（他エンジンと整合）
+        manager = get_model_manager()
+
+        with unicode_safe_download_directory():
+            with manager.huggingface_cache() as hf_cache:
+                # モデルをロード
+                model = Qwen3ASR(
+                    model_path=self.model_name,
+                    device=self.torch_device,
+                )
 
         self.report_progress(85, "Model loaded successfully")
 
@@ -313,11 +320,24 @@ class Qwen3ASREngine(BaseEngine):
 
             try:
                 # 文字起こし実行
-                result = self.model.transcribe(tmp_filename)
+                # language パラメータを渡す（None = 自動検出）
+                result = self.model.transcribe(
+                    audio=tmp_filename,
+                    language=self.language,
+                )
 
                 # 結果を取得
-                if result:
-                    text = result if isinstance(result, str) else str(result)
+                # Qwen3-ASR は結果オブジェクトのリストを返す
+                # 各オブジェクトには .text, .language, .time_stamps 属性がある
+                if result and len(result) > 0:
+                    # 最初の結果から text を抽出
+                    first_result = result[0]
+                    if hasattr(first_result, 'text'):
+                        text = first_result.text
+                    elif isinstance(first_result, str):
+                        text = first_result
+                    else:
+                        text = str(first_result)
                     logger.debug(f"Qwen3-ASR transcription: '{text}'")
                 else:
                     text = ""

@@ -168,35 +168,48 @@ class TestQwen3ASRAvailabilityCheck:
 
     def test_check_qwen_asr_availability_not_installed(self):
         """qwen-asr がインストールされていない場合 False を返すことを確認"""
-        # Reset the global state
         import livecap_cli.engines.qwen3asr_engine as module
+
+        # Reset the global state
+        original_value = module.QWEN_ASR_AVAILABLE
         module.QWEN_ASR_AVAILABLE = None
 
-        with patch("importlib.util.find_spec", return_value=None):
-            with patch.object(module, "QWEN_ASR_AVAILABLE", None):
-                # Simulate non-frozen environment with import failure
-                with patch("sys.frozen", False, create=True):
-                    with patch.dict("sys.modules", {"qwen_asr": None}):
-                        # Force re-check
-                        module.QWEN_ASR_AVAILABLE = None
-                        result = module.check_qwen_asr_availability()
-                        # In non-frozen environment, actual import is tried
-                        # Since qwen_asr is not installed, it should return False
-                        assert result is False
+        try:
+            # 非 frozen 環境でインポートが ImportError を発生させる場合をシミュレート
+            def mock_import(name, *args, **kwargs):
+                if name == "qwen_asr" or (args and args[0] == "qwen_asr"):
+                    raise ImportError("No module named 'qwen_asr'")
+                return original_import(name, *args, **kwargs)
+
+            import builtins
+            original_import = builtins.__import__
+
+            with patch.object(builtins, "__import__", side_effect=mock_import):
+                # Force re-check
+                module.QWEN_ASR_AVAILABLE = None
+                result = module.check_qwen_asr_availability()
+                assert result is False
+        finally:
+            # Reset for other tests
+            module.QWEN_ASR_AVAILABLE = original_value
 
     def test_check_qwen_asr_availability_caches_result(self):
         """可用性チェックの結果がキャッシュされることを確認"""
         import livecap_cli.engines.qwen3asr_engine as module
 
-        # Set cached value
-        module.QWEN_ASR_AVAILABLE = True
+        # Save original value
+        original_value = module.QWEN_ASR_AVAILABLE
 
-        # Should return cached value without checking
-        result = module.check_qwen_asr_availability()
-        assert result is True
+        try:
+            # Set cached value
+            module.QWEN_ASR_AVAILABLE = True
 
-        # Reset for other tests
-        module.QWEN_ASR_AVAILABLE = None
+            # Should return cached value without checking
+            result = module.check_qwen_asr_availability()
+            assert result is True
+        finally:
+            # Reset for other tests
+            module.QWEN_ASR_AVAILABLE = original_value
 
 
 class TestQwen3ASRDependencyCheck:
