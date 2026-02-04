@@ -238,10 +238,10 @@ class Qwen3ASREngine(BaseEngine):
 
         with unicode_safe_download_directory():
             with manager.huggingface_cache() as hf_cache:
-                # モデルをロード
-                model = Qwen3ASR(
-                    model_path=self.model_name,
-                    device=self.torch_device,
+                # モデルをロード（from_pretrained API を使用）
+                model = Qwen3ASR.from_pretrained(
+                    self.model_name,
+                    device_map=self.torch_device,
                 )
 
         self.report_progress(85, "Model loaded successfully")
