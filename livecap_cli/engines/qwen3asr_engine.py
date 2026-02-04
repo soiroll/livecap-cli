@@ -239,9 +239,12 @@ class Qwen3ASREngine(BaseEngine):
         with unicode_safe_download_directory():
             with manager.huggingface_cache() as hf_cache:
                 # モデルをロード（from_pretrained API を使用）
+                # device_map: "cpu" はそのまま、"cuda" は "auto" に変換
+                # "auto" は利用可能な GPU を自動選択する
+                device_map = "auto" if self.torch_device == "cuda" else self.torch_device
                 model = Qwen3ASR.from_pretrained(
                     self.model_name,
-                    device_map=self.torch_device,
+                    device_map=device_map,
                 )
 
         self.report_progress(85, "Model loaded successfully")
