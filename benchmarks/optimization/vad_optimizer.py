@@ -5,7 +5,10 @@ Provides the main optimization interface for finding optimal VAD parameters.
 
 from __future__ import annotations
 
+import json
 import logging
+import os
+import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -42,6 +45,7 @@ class OptimizationResult:
         n_trials: Number of trials completed
         duration_s: Total optimization duration in seconds
         study_name: Name of the Optuna study
+        engine_id: ASR engine used for optimization
         created_at: Timestamp of optimization completion
         study: Optuna study object (for report generation)
         output_dir: Output directory path
@@ -54,6 +58,7 @@ class OptimizationResult:
     n_trials: int
     duration_s: float = 0.0
     study_name: str = ""
+    engine_id: str = ""
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     study: "optuna.Study | None" = field(default=None, repr=False)
     output_dir: Path | None = field(default=None, repr=False)
@@ -68,8 +73,98 @@ class OptimizationResult:
             "n_trials": self.n_trials,
             "duration_s": self.duration_s,
             "study_name": self.study_name,
+            "engine_id": self.engine_id,
             "created_at": self.created_at,
         }
+
+    def _split_params(self) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Split best_params into vad_config and backend dicts.
+
+        Optuna stores parameters with prefixed names (``vad_config_*``,
+        ``backend_*``).  This method strips the prefixes and returns two
+        separate dictionaries.
+
+        Returns:
+            Tuple of (vad_config_params, backend_params)
+        """
+        vad_config: dict[str, Any] = {}
+        backend: dict[str, Any] = {}
+        for key, value in self.best_params.items():
+            if key.startswith("vad_config_"):
+                vad_config[key.removeprefix("vad_config_")] = value
+            elif key.startswith("backend_"):
+                backend[key.removeprefix("backend_")] = value
+        return vad_config, backend
+
+    def build_preset_dict(self) -> dict[str, Any]:
+        """Build a preset dictionary matching the JSON preset schema.
+
+        Returns:
+            Dict conforming to ``livecap_cli.vad.presets`` schema.
+
+        Raises:
+            ValueError: If the built preset fails schema validation.
+        """
+        from livecap_cli.vad.presets import _validate_preset
+
+        vad_config, backend = self._split_params()
+        metric = "cer" if self.language == "ja" else "wer"
+
+        preset = {
+            "vad_type": self.vad_type,
+            "language": self.language,
+            "vad_config": vad_config,
+            "backend": backend,
+            "metadata": {
+                "score": self.best_score,
+                "metric": metric,
+                "trials": self.n_trials,
+                "engine": self.engine_id,
+                "created_at": self.created_at,
+            },
+        }
+
+        filename = f"{self.vad_type}_{self.language}.json"
+        _validate_preset(preset, filename)
+        return preset
+
+    def export_preset(self, preset_dir: Path | None = None) -> Path:
+        """Export optimization result as a VAD preset JSON file.
+
+        Writes atomically (temp file + rename) to prevent corruption
+        on interruption.
+
+        Args:
+            preset_dir: Directory to write the preset file.
+                Defaults to ``livecap_cli/vad/presets/``.
+
+        Returns:
+            Path to the written preset file.
+
+        Raises:
+            ValueError: If the built preset fails schema validation.
+        """
+        import livecap_cli.vad.presets as _presets_pkg
+
+        if preset_dir is None:
+            preset_dir = Path(_presets_pkg.__file__).parent
+
+        preset = self.build_preset_dict()
+        filename = f"{self.vad_type}_{self.language}.json"
+        output_path = preset_dir / filename
+
+        # Atomic write: temp file in same directory → rename
+        fd, tmp_path = tempfile.mkstemp(dir=preset_dir, suffix=".json.tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(preset, f, indent=2, ensure_ascii=False)
+                f.write("\n")
+            Path(tmp_path).replace(output_path)
+        except BaseException:
+            Path(tmp_path).unlink(missing_ok=True)
+            raise
+
+        return output_path
 
     def generate_reports(self, output_dir: Path | None = None) -> ReportPaths:
         """Generate visualization reports (HTML, JSON, Step Summary).
@@ -254,6 +349,7 @@ class VADOptimizer:
             n_trials=len(study.trials),
             duration_s=duration_s,
             study_name=study_name,
+            engine_id=self.engine_id,
             study=study,
             output_dir=output_dir,
         )

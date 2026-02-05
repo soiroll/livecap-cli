@@ -92,6 +92,8 @@ benchmark_results/optimization/
 | `--seed` | 42 | 乱数シード（再現性） |
 | `--device` | cuda | 推論デバイス（`cuda` / `cpu`） |
 | `--mode` | quick | データセットモード（`quick`: 30件, `standard`: 100件） |
+| `--export-preset` | False | 最適パラメータを VAD プリセット JSON として出力（`livecap_cli/vad/presets/` を更新） |
+| `--preset-dir` | 自動 | プリセット出力先ディレクトリ（`--export-preset` 使用時） |
 | `--report` | False | レポート生成を有効化 |
 | `--output`, `-o` | なし | 結果 JSON の出力パス |
 | `--verbose`, `-v` | False | 詳細ログ出力 |
@@ -122,6 +124,15 @@ python -m benchmarks.optimization \
   --device cpu \
   --n-trials 30 \
   --report
+
+# 最適パラメータを VAD プリセットとして直接エクスポート
+python -m benchmarks.optimization \
+  --vad silero \
+  --language ja \
+  --engine qwen3asr \
+  --n-trials 100 \
+  --export-preset
+# → livecap_cli/vad/presets/silero_ja.json を更新
 ```
 
 ---

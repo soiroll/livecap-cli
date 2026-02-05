@@ -68,6 +68,9 @@ Examples:
   # Save results to JSON
   python -m benchmarks.optimization --vad silero --language ja --output results.json
 
+  # Export best parameters as a VAD preset (updates livecap_cli/vad/presets/)
+  python -m benchmarks.optimization --vad silero --language ja --export-preset
+
   # Generate visualization reports (HTML, JSON, Step Summary)
   python -m benchmarks.optimization --vad silero --language ja --report
 
@@ -145,6 +148,19 @@ Report Generation:
         "--storage",
         default=None,
         help="Optuna storage URL (overrides --output-dir)",
+    )
+
+    # Export options
+    parser.add_argument(
+        "--export-preset",
+        action="store_true",
+        help="Export best parameters as a VAD preset JSON (updates livecap_cli/vad/presets/)",
+    )
+    parser.add_argument(
+        "--preset-dir",
+        type=Path,
+        default=None,
+        help="Directory to write preset JSON (default: livecap_cli/vad/presets/)",
     )
 
     # Report options
@@ -237,6 +253,21 @@ def main(args: list[str] | None = None) -> int:
             save_result(result, parsed.output)
             logger.info("")
             logger.info(f"Results saved to: {parsed.output}")
+
+        # Export preset if requested
+        if parsed.export_preset:
+            logger.info("")
+            logger.info("Exporting preset...")
+            try:
+                preset_path = result.export_preset(preset_dir=parsed.preset_dir)
+                logger.info(f"Preset exported to: {preset_path}")
+            except OSError as e:
+                target = parsed.preset_dir or "livecap_cli/vad/presets/"
+                logger.error(
+                    f"Failed to write preset to {target}: {e}. "
+                    f"Use --preset-dir to specify a writable directory."
+                )
+                return 1
 
         # Generate reports if requested
         if parsed.report:
