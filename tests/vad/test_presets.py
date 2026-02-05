@@ -1,6 +1,9 @@
-"""Tests for VAD optimized presets."""
+"""Tests for VAD optimized presets (JSON-backed)."""
 
 from __future__ import annotations
+
+import json
+from typing import Any
 
 import pytest
 
@@ -11,6 +14,11 @@ from livecap_cli.vad.presets import (
     get_best_vad_for_language,
     get_optimized_preset,
 )
+
+
+# =========================================================================
+# Existing API compatibility tests
+# =========================================================================
 
 
 class TestVADOptimizedPresets:
@@ -153,3 +161,249 @@ class TestPresetMetadata:
             for lang, preset in languages.items():
                 score = preset["metadata"]["score"]
                 assert 0 < score < 1, f"{vad_type}/{lang} has invalid score: {score}"
+
+
+# =========================================================================
+# JSON loading and validation tests
+# =========================================================================
+
+
+class TestJSONPresetLoading:
+    """Test that presets are loaded from JSON files via importlib.resources."""
+
+    def test_loads_from_importlib_resources(self):
+        """Presets should be loadable via importlib.resources.files()."""
+        from importlib.resources import files
+
+        package = files("livecap_cli.vad.presets")
+        json_files = [
+            r.name for r in package.iterdir()
+            if hasattr(r, "name") and r.name.endswith(".json")
+        ]
+        assert len(json_files) == 6
+        expected = {
+            "silero_ja.json", "silero_en.json",
+            "tenvad_ja.json", "tenvad_en.json",
+            "webrtc_ja.json", "webrtc_en.json",
+        }
+        assert set(json_files) == expected
+
+    def test_all_json_files_are_valid_json(self):
+        """All JSON files should parse without errors."""
+        from importlib.resources import files
+
+        package = files("livecap_cli.vad.presets")
+        for resource in package.iterdir():
+            if not hasattr(resource, "name") or not resource.name.endswith(".json"):
+                continue
+            raw = resource.read_text(encoding="utf-8")
+            data = json.loads(raw)
+            assert isinstance(data, dict), f"{resource.name} is not a JSON object"
+
+    def test_json_metadata_has_extended_fields(self):
+        """JSON presets should have engine, metric, and created_at in metadata."""
+        for vad_type, languages in VAD_OPTIMIZED_PRESETS.items():
+            for lang, preset in languages.items():
+                meta = preset["metadata"]
+                assert "metric" in meta, f"{vad_type}/{lang} missing metric"
+                assert "engine" in meta, f"{vad_type}/{lang} missing engine"
+                assert "created_at" in meta, f"{vad_type}/{lang} missing created_at"
+
+    def test_ja_presets_have_cer_metric(self):
+        """Japanese presets should use CER metric."""
+        for vad_type in ["silero", "tenvad", "webrtc"]:
+            preset = get_optimized_preset(vad_type, "ja")
+            assert preset["metadata"]["metric"] == "cer"
+
+    def test_en_presets_have_wer_metric(self):
+        """English presets should use WER metric."""
+        for vad_type in ["silero", "tenvad", "webrtc"]:
+            preset = get_optimized_preset(vad_type, "en")
+            assert preset["metadata"]["metric"] == "wer"
+
+
+class TestPresetValidation:
+    """Test JSON preset validation logic."""
+
+    def _make_valid_preset(self) -> dict[str, Any]:
+        """Create a minimal valid preset dict."""
+        return {
+            "vad_type": "silero",
+            "language": "ja",
+            "vad_config": {
+                "threshold": 0.5,
+                "min_speech_ms": 250,
+                "min_silence_ms": 100,
+                "speech_pad_ms": 100,
+            },
+            "metadata": {
+                "score": 0.1,
+                "metric": "cer",
+                "trials": 10,
+                "engine": "test_engine",
+                "created_at": "2025-01-01T00:00:00Z",
+            },
+        }
+
+    def test_valid_preset_passes(self):
+        """A fully valid preset should pass validation."""
+        from livecap_cli.vad.presets import _validate_preset
+
+        data = self._make_valid_preset()
+        _validate_preset(data, "test.json")  # Should not raise
+
+    def test_missing_top_level_key(self):
+        """Missing top-level key should raise ValueError with key name."""
+        from livecap_cli.vad.presets import _validate_preset
+
+        data = self._make_valid_preset()
+        del data["vad_type"]
+
+        with pytest.raises(ValueError, match="missing required key 'vad_type'"):
+            _validate_preset(data, "test.json")
+
+    def test_missing_vad_config_key(self):
+        """Missing vad_config key should raise ValueError with dotted path."""
+        from livecap_cli.vad.presets import _validate_preset
+
+        data = self._make_valid_preset()
+        del data["vad_config"]["min_speech_ms"]
+
+        with pytest.raises(ValueError, match="vad_config.min_speech_ms"):
+            _validate_preset(data, "test.json")
+
+    def test_missing_metadata_key(self):
+        """Missing metadata key should raise ValueError with dotted path."""
+        from livecap_cli.vad.presets import _validate_preset
+
+        data = self._make_valid_preset()
+        del data["metadata"]["engine"]
+
+        with pytest.raises(ValueError, match="metadata.engine"):
+            _validate_preset(data, "test.json")
+
+    def test_wrong_type_top_level(self):
+        """Wrong type for top-level key should raise ValueError."""
+        from livecap_cli.vad.presets import _validate_preset
+
+        data = self._make_valid_preset()
+        data["vad_type"] = 123  # should be str
+
+        with pytest.raises(ValueError, match="must be str"):
+            _validate_preset(data, "test.json")
+
+    def test_wrong_type_vad_config(self):
+        """Wrong type for vad_config value should raise ValueError."""
+        from livecap_cli.vad.presets import _validate_preset
+
+        data = self._make_valid_preset()
+        data["vad_config"]["min_speech_ms"] = "not_a_number"
+
+        with pytest.raises(ValueError, match="must be int/float"):
+            _validate_preset(data, "test.json")
+
+    def test_wrong_type_metadata(self):
+        """Wrong type for metadata value should raise ValueError."""
+        from livecap_cli.vad.presets import _validate_preset
+
+        data = self._make_valid_preset()
+        data["metadata"]["score"] = "not_a_number"
+
+        with pytest.raises(ValueError, match="must be int/float"):
+            _validate_preset(data, "test.json")
+
+    def test_invalid_metric_value(self):
+        """Unsupported metric should raise ValueError with supported list."""
+        from livecap_cli.vad.presets import _validate_preset
+
+        data = self._make_valid_preset()
+        data["metadata"]["metric"] = "bleu"
+
+        with pytest.raises(ValueError, match=r"must be one of \['cer', 'wer'\]"):
+            _validate_preset(data, "test.json")
+
+    def test_error_message_includes_source(self):
+        """Error messages should include the source file name."""
+        from livecap_cli.vad.presets import _validate_preset
+
+        data = self._make_valid_preset()
+        del data["language"]
+
+        with pytest.raises(ValueError, match="my_preset.json"):
+            _validate_preset(data, "my_preset.json")
+
+    def test_backend_wrong_type_raises(self):
+        """Non-dict backend should raise ValueError."""
+        from livecap_cli.vad.presets import _validate_preset
+
+        data = self._make_valid_preset()
+        data["backend"] = ["not", "a", "dict"]
+
+        with pytest.raises(ValueError, match="'backend' must be dict"):
+            _validate_preset(data, "test.json")
+
+    def test_backend_string_raises(self):
+        """String backend should raise ValueError."""
+        from livecap_cli.vad.presets import _validate_preset
+
+        data = self._make_valid_preset()
+        data["backend"] = "invalid"
+
+        with pytest.raises(ValueError, match="'backend' must be dict"):
+            _validate_preset(data, "test.json")
+
+    def test_optional_threshold_wrong_type_raises(self):
+        """Non-numeric threshold should raise ValueError."""
+        from livecap_cli.vad.presets import _validate_preset
+
+        data = self._make_valid_preset()
+        data["vad_config"]["threshold"] = "high"
+
+        with pytest.raises(ValueError, match="vad_config.threshold"):
+            _validate_preset(data, "test.json")
+
+    def test_optional_neg_threshold_wrong_type_raises(self):
+        """Non-numeric neg_threshold should raise ValueError."""
+        from livecap_cli.vad.presets import _validate_preset
+
+        data = self._make_valid_preset()
+        data["vad_config"]["neg_threshold"] = "low"  # str, not numeric
+
+        with pytest.raises(ValueError, match="vad_config.neg_threshold"):
+            _validate_preset(data, "test.json")
+
+    def test_optional_threshold_absent_passes(self):
+        """Preset without threshold (e.g. WebRTC) should pass validation."""
+        from livecap_cli.vad.presets import _validate_preset
+
+        data = self._make_valid_preset()
+        del data["vad_config"]["threshold"]
+
+        _validate_preset(data, "test.json")  # Should not raise
+
+
+class TestBackendDefault:
+    """Test backend key default behavior."""
+
+    def test_backend_defaults_to_empty_for_silero(self):
+        """Silero presets should not have backend key (no backend params)."""
+        preset = get_optimized_preset("silero", "ja")
+        assert preset is not None
+        # Silero has empty backend in JSON, so backend key should be absent
+        # in the loaded entry (only included when non-empty)
+        assert "backend" not in preset or preset.get("backend") == {}
+
+    def test_backend_present_for_tenvad(self):
+        """TenVAD presets should have backend with hop_size."""
+        preset = get_optimized_preset("tenvad", "ja")
+        assert preset is not None
+        assert "backend" in preset
+        assert "hop_size" in preset["backend"]
+
+    def test_backend_present_for_webrtc(self):
+        """WebRTC presets should have backend with mode and frame_duration_ms."""
+        preset = get_optimized_preset("webrtc", "ja")
+        assert preset is not None
+        assert "backend" in preset
+        assert "mode" in preset["backend"]
+        assert "frame_duration_ms" in preset["backend"]
