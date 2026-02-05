@@ -156,6 +156,12 @@ Report Generation:
         action="store_true",
         help="Export best parameters as a VAD preset JSON (updates livecap_cli/vad/presets/)",
     )
+    parser.add_argument(
+        "--preset-dir",
+        type=Path,
+        default=None,
+        help="Directory to write preset JSON (default: livecap_cli/vad/presets/)",
+    )
 
     # Report options
     parser.add_argument(
@@ -252,8 +258,16 @@ def main(args: list[str] | None = None) -> int:
         if parsed.export_preset:
             logger.info("")
             logger.info("Exporting preset...")
-            preset_path = result.export_preset()
-            logger.info(f"Preset exported to: {preset_path}")
+            try:
+                preset_path = result.export_preset(preset_dir=parsed.preset_dir)
+                logger.info(f"Preset exported to: {preset_path}")
+            except OSError as e:
+                target = parsed.preset_dir or "livecap_cli/vad/presets/"
+                logger.error(
+                    f"Failed to write preset to {target}: {e}. "
+                    f"Use --preset-dir to specify a writable directory."
+                )
+                return 1
 
         # Generate reports if requested
         if parsed.report:

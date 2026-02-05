@@ -245,3 +245,18 @@ class TestCLIExportPresetArg:
 
         args = parse_args(["--vad", "silero", "--language", "ja"])
         assert args.export_preset is False
+
+    def test_parse_preset_dir(self):
+        from benchmarks.optimization.__main__ import parse_args
+
+        args = parse_args([
+            "--vad", "silero", "--language", "ja",
+            "--export-preset", "--preset-dir", "/tmp/presets",
+        ])
+        assert args.preset_dir == Path("/tmp/presets")
+
+    def test_preset_dir_default_none(self):
+        from benchmarks.optimization.__main__ import parse_args
+
+        args = parse_args(["--vad", "silero", "--language", "ja"])
+        assert args.preset_dir is None
