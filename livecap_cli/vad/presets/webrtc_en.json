@@ -1,0 +1,20 @@
+{
+  "vad_type": "webrtc",
+  "language": "en",
+  "vad_config": {
+    "min_speech_ms": 450,
+    "min_silence_ms": 280,
+    "speech_pad_ms": 200
+  },
+  "backend": {
+    "mode": 0,
+    "frame_duration_ms": 30
+  },
+  "metadata": {
+    "score": 0.033,
+    "metric": "wer",
+    "trials": 60,
+    "engine": "parakeet",
+    "created_at": "2025-11-29T17:00:35+09:00"
+  }
+}

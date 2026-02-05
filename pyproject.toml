@@ -162,6 +162,9 @@ livecap-cli = "livecap_cli.cli:main"
 where = ["."]
 include = ["livecap_cli*", "benchmarks*"]
 
+[tool.setuptools.package-data]
+"livecap_cli.vad.presets" = ["*.json"]
+
 [tool.pytest.ini_options]
 markers = [
   "engine_smoke: end-to-end engine smoke tests with real audio fixtures",
