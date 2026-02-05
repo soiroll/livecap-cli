@@ -68,6 +68,9 @@ Examples:
   # Save results to JSON
   python -m benchmarks.optimization --vad silero --language ja --output results.json
 
+  # Export best parameters as a VAD preset (updates livecap_cli/vad/presets/)
+  python -m benchmarks.optimization --vad silero --language ja --export-preset
+
   # Generate visualization reports (HTML, JSON, Step Summary)
   python -m benchmarks.optimization --vad silero --language ja --report
 
@@ -145,6 +148,13 @@ Report Generation:
         "--storage",
         default=None,
         help="Optuna storage URL (overrides --output-dir)",
+    )
+
+    # Export options
+    parser.add_argument(
+        "--export-preset",
+        action="store_true",
+        help="Export best parameters as a VAD preset JSON (updates livecap_cli/vad/presets/)",
     )
 
     # Report options
@@ -237,6 +247,13 @@ def main(args: list[str] | None = None) -> int:
             save_result(result, parsed.output)
             logger.info("")
             logger.info(f"Results saved to: {parsed.output}")
+
+        # Export preset if requested
+        if parsed.export_preset:
+            logger.info("")
+            logger.info("Exporting preset...")
+            preset_path = result.export_preset()
+            logger.info(f"Preset exported to: {preset_path}")
 
         # Generate reports if requested
         if parsed.report:
