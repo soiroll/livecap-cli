@@ -78,6 +78,17 @@ class TestPresetVADFiltering:
         assert kept == ["silero", "tenvad", "webrtc"]
 
 
+    def test_preset_unknown_vad_returns_error(self, caplog):
+        """Unknown VAD (typo) should error even in preset mode."""
+        with caplog.at_level(logging.ERROR):
+            exit_code = main([
+                "--param-source", "preset",
+                "--vad", "sileroo",
+            ])
+        assert exit_code == 1
+        assert "Unknown VAD" in caplog.text
+
+
 class TestDefaultModeVADValidation:
     """Test VAD validation in default (non-preset) mode."""
 

@@ -169,9 +169,15 @@ def main(args: list[str] | None = None) -> int:
     # Validate VAD names based on param_source
     param_source = getattr(parsed, 'param_source', 'default')
     if param_source == "preset":
-        # Preset mode: filter out VADs that lack optimized presets (with warning)
+        # Preset mode: reject unknown VADs (typo), skip known but non-preset VADs
+        all_vads = set(get_all_vad_ids())
         preset_vads = set(get_preset_vad_ids())
         if parsed.vad:
+            for vad_id in parsed.vad:
+                if vad_id not in all_vads:
+                    logger.error(f"Unknown VAD: {vad_id}")
+                    logger.error(f"Available VADs: {', '.join(sorted(all_vads))}")
+                    return 1
             skipped = [v for v in parsed.vad if v not in preset_vads]
             kept = [v for v in parsed.vad if v in preset_vads]
             for vad_id in skipped:
