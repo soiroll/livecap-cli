@@ -332,6 +332,55 @@ class TestPresetValidation:
         with pytest.raises(ValueError, match="my_preset.json"):
             _validate_preset(data, "my_preset.json")
 
+    def test_backend_wrong_type_raises(self):
+        """Non-dict backend should raise ValueError."""
+        from livecap_cli.vad.presets import _validate_preset
+
+        data = self._make_valid_preset()
+        data["backend"] = ["not", "a", "dict"]
+
+        with pytest.raises(ValueError, match="'backend' must be dict"):
+            _validate_preset(data, "test.json")
+
+    def test_backend_string_raises(self):
+        """String backend should raise ValueError."""
+        from livecap_cli.vad.presets import _validate_preset
+
+        data = self._make_valid_preset()
+        data["backend"] = "invalid"
+
+        with pytest.raises(ValueError, match="'backend' must be dict"):
+            _validate_preset(data, "test.json")
+
+    def test_optional_threshold_wrong_type_raises(self):
+        """Non-numeric threshold should raise ValueError."""
+        from livecap_cli.vad.presets import _validate_preset
+
+        data = self._make_valid_preset()
+        data["vad_config"]["threshold"] = "high"
+
+        with pytest.raises(ValueError, match="vad_config.threshold"):
+            _validate_preset(data, "test.json")
+
+    def test_optional_neg_threshold_wrong_type_raises(self):
+        """Non-numeric neg_threshold should raise ValueError."""
+        from livecap_cli.vad.presets import _validate_preset
+
+        data = self._make_valid_preset()
+        data["vad_config"]["neg_threshold"] = "low"  # str, not numeric
+
+        with pytest.raises(ValueError, match="vad_config.neg_threshold"):
+            _validate_preset(data, "test.json")
+
+    def test_optional_threshold_absent_passes(self):
+        """Preset without threshold (e.g. WebRTC) should pass validation."""
+        from livecap_cli.vad.presets import _validate_preset
+
+        data = self._make_valid_preset()
+        del data["vad_config"]["threshold"]
+
+        _validate_preset(data, "test.json")  # Should not raise
+
 
 class TestBackendDefault:
     """Test backend key default behavior."""

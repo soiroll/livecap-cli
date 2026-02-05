@@ -55,6 +55,13 @@ _REQUIRED_VAD_CONFIG_KEYS: dict[str, type | tuple[type, ...]] = {
     "speech_pad_ms": (int, float),
 }
 
+# Optional vad_config keys: not required (e.g. WebRTC doesn't use threshold),
+# but if present they must have the correct type.
+_OPTIONAL_VAD_CONFIG_KEYS: dict[str, type | tuple[type, ...]] = {
+    "threshold": (int, float),
+    "neg_threshold": (int, float),
+}
+
 _REQUIRED_METADATA_KEYS: dict[str, type | tuple[type, ...]] = {
     "score": (int, float),
     "metric": str,
@@ -87,7 +94,14 @@ def _validate_preset(data: dict[str, Any], source: str) -> None:
                 f"got {type(data[key]).__name__}"
             )
 
-    # vad_config keys
+    # backend type check (optional key, but must be dict if present)
+    if "backend" in data and not isinstance(data["backend"], dict):
+        raise ValueError(
+            f"Preset '{source}': key 'backend' must be dict, "
+            f"got {type(data['backend']).__name__}"
+        )
+
+    # vad_config keys (required)
     vad_config = data["vad_config"]
     for key, expected_type in _REQUIRED_VAD_CONFIG_KEYS.items():
         if key not in vad_config:
@@ -96,6 +110,19 @@ def _validate_preset(data: dict[str, Any], source: str) -> None:
                 f"Required vad_config keys: {list(_REQUIRED_VAD_CONFIG_KEYS.keys())}"
             )
         if not isinstance(vad_config[key], expected_type):
+            type_names = (
+                expected_type.__name__
+                if isinstance(expected_type, type)
+                else "/".join(t.__name__ for t in expected_type)
+            )
+            raise ValueError(
+                f"Preset '{source}': key 'vad_config.{key}' must be {type_names}, "
+                f"got {type(vad_config[key]).__name__}"
+            )
+
+    # vad_config keys (optional — type-checked only when present)
+    for key, expected_type in _OPTIONAL_VAD_CONFIG_KEYS.items():
+        if key in vad_config and not isinstance(vad_config[key], expected_type):
             type_names = (
                 expected_type.__name__
                 if isinstance(expected_type, type)
